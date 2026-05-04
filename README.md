@@ -66,6 +66,8 @@ Credentials come from the default AWS SDK credential chain: `AWS_ACCESS_KEY_ID` 
 
 ## Migration anatomy
 
+For more patterns — idempotent backfills, expand-and-contract renames, parallel scans with checkpoints, GSI adds — see [`examples/`](./examples/).
+
 ```ts
 // migrations/2026-05-04-113000-backfill-schema-version.ts
 import type { MigrationContext } from 'ddb-migrations';
