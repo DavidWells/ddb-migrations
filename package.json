@@ -1,0 +1,60 @@
+{
+  "name": "ddb-migrations",
+  "version": "0.1.0",
+  "description": "Stage-aware DynamoDB migrations for TypeScript projects.",
+  "type": "module",
+  "bin": {
+    "ddb-migrate": "dist/bin/cli.js"
+  },
+  "main": "dist/lib/index.js",
+  "types": "dist/lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/lib/index.d.ts",
+      "import": "./dist/lib/index.js"
+    }
+  },
+  "files": [
+    "dist/**/*",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc && chmod +x dist/bin/cli.js",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --experimental-strip-types tests/*.test.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "keywords": [
+    "dynamodb",
+    "migrations",
+    "aws",
+    "typescript"
+  ],
+  "author": "David Wells",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DavidWells/ddb-migrations.git"
+  },
+  "bugs": {
+    "url": "https://github.com/DavidWells/ddb-migrations/issues"
+  },
+  "homepage": "https://github.com/DavidWells/ddb-migrations#readme",
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.700.0",
+    "@aws-sdk/lib-dynamodb": "^3.700.0",
+    "cli-table3": "^0.6.5",
+    "commander": "^12.1.0",
+    "picocolors": "^1.1.1",
+    "tsx": "^4.19.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "typescript": "^5.6.3"
+  }
+}
