@@ -23,7 +23,11 @@
     "build": "tsc && chmod +x dist/bin/cli.js",
     "dev": "tsc --watch",
     "typecheck": "tsc --noEmit",
-    "test": "node --test --experimental-strip-types tests/*.test.ts",
+    "test": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:all": "vitest run",
+    "ddb:up": "docker compose up -d",
+    "ddb:down": "docker compose down -v",
     "prepublishOnly": "npm run build"
   },
   "engines": {
@@ -55,6 +59,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
   }
 }

@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    services:
+      dynamodb:
+        image: amazon/dynamodb-local:latest
+        ports:
+          - 8000:8000
+    env:
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_REGION: us-east-1
+      DDB_ENDPOINT: http://localhost:8000
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Wait for DynamoDB Local
+        run: |
+          for i in {1..30}; do
+            if (echo > /dev/tcp/localhost/8000) >/dev/null 2>&1; then
+              echo "DDB Local is up after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "DDB Local did not come up in time" >&2
+          exit 1
+        shell: bash
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Integration tests
+        run: npm run test:integration
