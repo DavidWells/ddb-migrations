@@ -19,8 +19,7 @@
     "examples/**/*",
     "stack/README.md",
     "stack/package.json",
-    "stack/serverless.js",
-    "stack/stack.yml",
+    "stack/serverless.yml",
     "README.md",
     "LICENSE"
   ],
