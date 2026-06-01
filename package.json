@@ -32,7 +32,11 @@
     "test:all": "vitest run",
     "ddb:up": "docker compose up -d",
     "ddb:down": "docker compose down -v",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "publish": "git push origin && git push origin --tags",
+    "release:patch": "npm version patch && npm publish",
+    "release:minor": "npm version minor && npm publish",
+    "release:major": "npm version major && npm publish"
   },
   "engines": {
     "node": ">=20.0.0"
