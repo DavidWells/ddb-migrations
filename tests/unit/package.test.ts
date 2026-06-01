@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 type PackageJson = {
+  name?: string;
   files?: string[];
 };
 
@@ -10,6 +11,10 @@ function packageJson(): PackageJson {
 }
 
 describe('package manifest', () => {
+  it('uses the publishable npm package name', () => {
+    expect(packageJson().name).toBe('ddb-migration-tools');
+  });
+
   it('ships the clean reference stack but not generated stack artifacts', () => {
     const files = packageJson().files ?? [];
 

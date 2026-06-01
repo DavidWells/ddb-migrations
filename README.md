@@ -1,4 +1,4 @@
-# ddb-migrations
+# ddb-migration-tools
 
 Stage-aware DynamoDB migrations for TypeScript projects.
 
@@ -14,7 +14,7 @@ A small, modern alternative to [`dynamo-data-migrations`](https://github.com/tec
 ## Install
 
 ```bash
-npm install --save-dev ddb-migrations
+npm install --save-dev ddb-migration-tools
 ```
 
 ## Quick start
@@ -95,7 +95,7 @@ Directory migration checksums include every non-hidden file under the migration 
 ```ts
 // migrations/2026-05-04_11-30_backfill_schema_version/index.ts
 import { ScanCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
-import type { MigrationContext } from 'ddb-migrations';
+import type { MigrationContext } from 'ddb-migration-tools';
 
 export const description = 'Backfill schemaVersion=1 on User items';
 
@@ -212,7 +212,7 @@ Files and migration directories in `migrations/` are sorted lexicographically by
 
 ## Why not `dynamo-data-migrations`?
 
-| | `dynamo-data-migrations` | `ddb-migrations` |
+| | `dynamo-data-migrations` | `ddb-migration-tools` |
 | --- | --- | --- |
 | AWS SDK | v2 (EOL) | v3 |
 | Multi-env model | AWS profiles | Logical stages with table prefixes |

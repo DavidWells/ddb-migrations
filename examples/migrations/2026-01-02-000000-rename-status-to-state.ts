@@ -15,7 +15,7 @@
  * already wrote `state` between our Scan and our Update.
  */
 import { ScanCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
-import type { MigrationContext } from 'ddb-migrations';
+import type { MigrationContext } from 'ddb-migration-tools';
 
 export const description = 'Backfill `state` from `status` on Orders';
 

@@ -4,7 +4,7 @@ Illustrative migration files for common DynamoDB schema-evolution
 patterns. They aren't run by the test suite — they exist as reference
 material to copy into your own project's `migrations/` directory.
 
-Each file imports `MigrationContext` from `ddb-migrations` (the way a
+Each file imports `MigrationContext` from `ddb-migration-tools` (the way a
 consumer would). The examples are excluded from this repo's `tsc` build
 because the import path only resolves once the package is installed.
 

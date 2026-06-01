@@ -2,7 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { loadConfig } from '../config.js';
 
-const TEMPLATE = `import type { MigrationContext } from 'ddb-migrations';
+const TEMPLATE = `import type { MigrationContext } from 'ddb-migration-tools';
 
 export const description = '__DESCRIPTION__';
 

@@ -1,5 +1,5 @@
 {
-  "name": "ddb-migrations",
+  "name": "ddb-migration-tools",
   "version": "2.0.0",
   "description": "Stage-aware DynamoDB migrations for TypeScript projects.",
   "type": "module",
@@ -33,10 +33,10 @@
     "ddb:up": "docker compose up -d",
     "ddb:down": "docker compose down -v",
     "prepublishOnly": "npm run build",
-    "publish": "git push origin && git push origin --tags",
-    "release:patch": "npm version patch && npm publish",
-    "release:minor": "npm version minor && npm publish",
-    "release:major": "npm version major && npm publish"
+    "release:push": "git push origin && git push origin --tags",
+    "release:patch": "npm version patch && npm publish && npm run release:push",
+    "release:minor": "npm version minor && npm publish && npm run release:push",
+    "release:major": "npm version major && npm publish && npm run release:push"
   },
   "engines": {
     "node": ">=20.0.0"

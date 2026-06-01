@@ -14,7 +14,7 @@
  * release cycle.
  */
 import { ScanCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
-import type { MigrationContext } from 'ddb-migrations';
+import type { MigrationContext } from 'ddb-migration-tools';
 
 export const description = 'Remove legacy `status` from Orders';
 

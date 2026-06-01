@@ -15,7 +15,7 @@ import {
   DescribeTableCommand,
   UpdateTableCommand,
 } from '@aws-sdk/client-dynamodb';
-import type { MigrationContext } from 'ddb-migrations';
+import type { MigrationContext } from 'ddb-migration-tools';
 
 export const description = 'Add email-lookup GSI to Users';
 

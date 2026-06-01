@@ -20,7 +20,7 @@
  *     next checkpoint write from any segment.
  */
 import { ScanCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
-import type { MigrationContext } from 'ddb-migrations';
+import type { MigrationContext } from 'ddb-migration-tools';
 
 const TOTAL_SEGMENTS = 8;
 const TARGET_VERSION = 2;
