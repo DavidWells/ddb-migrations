@@ -1,6 +1,6 @@
 {
   "name": "ddb-migrations",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "description": "Stage-aware DynamoDB migrations for TypeScript projects.",
   "type": "module",
   "bin": {
