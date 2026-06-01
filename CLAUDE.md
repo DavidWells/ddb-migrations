@@ -22,6 +22,7 @@ Notes for AI agents working on this repo.
 - Migration ids are timestamped. Current `create` output uses `YYYY-MM-DD_HH-MM-<slug>`. Lexicographic sort = chronological order.
 - Ledger table primary key is stage-scoped: `pk = SCOPE#<scope>#STAGE#<stage>`, `sk = MIGRATION#<migrationId>`.
 - Drift detection: SHA-256 of the migration file at apply time, compared on each `status` / `up`.
+- `createClients` returns two pairs: `{raw, doc}` for app tables and `{ledgerRaw, ledgerDoc}` for the ledger. They are the same instance when `stage.ledgerRegion`/`ledgerEndpoint` match `stage.region`/`endpoint`. The `Ledger` class is always constructed with the ledger pair; migration code (via `ctx.ddb` / `ctx.ddbRaw`) always sees the app pair. The `region` attribute on a `LedgerEntry` records the **app** region (where side effects landed), not the ledger region.
 
 ## Adding a new CLI verb
 

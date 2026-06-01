@@ -69,11 +69,20 @@ export function resolveStage(cfg: Config, stage: string): ResolvedStage {
       `Unknown stage '${stage}'. Available stages: ${Object.keys(cfg.stages).join(', ')}.`,
     );
   }
+  const ledgerRegion = sc.ledgerRegion ?? cfg.ledger?.region ?? sc.region;
+  // Only inherit stage.endpoint when the ledger region also inherits stage.region;
+  // otherwise the ledger lives somewhere else and stage.endpoint (e.g. ddb-local)
+  // would be wrong.
+  const explicitLedgerEndpoint = sc.ledgerEndpoint ?? cfg.ledger?.endpoint;
+  const ledgerEndpoint =
+    explicitLedgerEndpoint ?? (ledgerRegion === sc.region ? sc.endpoint : undefined);
   return {
     ...sc,
     stage,
     ledgerTable: sc.ledgerTable ?? cfg.ledger?.tableName ?? 'ddb-migrations-ledger',
     ledgerScope: cfg.ledger?.scope ?? cfg.appName,
+    ledgerRegion,
+    ledgerEndpoint,
   };
 }
 

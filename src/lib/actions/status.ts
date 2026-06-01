@@ -21,8 +21,8 @@ export async function status(opts: StatusOptions): Promise<StatusItem[]> {
   const cwd = opts.cwd ?? process.cwd();
   const cfg = await loadConfig(cwd);
   const sc = resolveStage(cfg, opts.stage);
-  const { raw, doc } = createClients(sc);
-  const ledger = new Ledger(raw, doc, {
+  const { ledgerRaw, ledgerDoc } = createClients(sc);
+  const ledger = new Ledger(ledgerRaw, ledgerDoc, {
     tableName: sc.ledgerTable,
     scope: sc.ledgerScope,
     stage: opts.stage,

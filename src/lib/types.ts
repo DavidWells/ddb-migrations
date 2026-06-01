@@ -13,6 +13,10 @@ export type StageConfig = {
   tables?: Record<string, string>;
   /** Stage override for the migrations ledger table. Defaults to ledger.tableName or ddb-migrations-ledger. */
   ledgerTable?: string;
+  /** Stage override for the ledger AWS region. Wins over ledger.region. Defaults to stage.region. */
+  ledgerRegion?: string;
+  /** Stage override for the ledger AWS endpoint. Wins over ledger.endpoint. Defaults to stage.endpoint. */
+  ledgerEndpoint?: string;
   /** AWS endpoint override (for ddb-local / testcontainers). */
   endpoint?: string;
 };
@@ -22,6 +26,10 @@ export type LedgerConfig = {
   tableName?: string;
   /** Namespace used in ledger partition keys. Defaults to appName. */
   scope?: string;
+  /** AWS region for the ledger table. Defaults to the active stage's region. */
+  region?: string;
+  /** AWS endpoint override for the ledger client (ddb-local / testcontainers). */
+  endpoint?: string;
 };
 
 export type Config = {
@@ -35,6 +43,8 @@ export type ResolvedStage = StageConfig & {
   stage: string;
   ledgerTable: string;
   ledgerScope: string;
+  ledgerRegion: string;
+  ledgerEndpoint?: string;
 };
 
 export type LedgerStatus = 'completed' | 'in_progress' | 'failed';

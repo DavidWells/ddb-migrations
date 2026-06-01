@@ -26,7 +26,7 @@ export async function up(opts: UpOptions): Promise<UpResult> {
   const cfg = await loadConfig(cwd);
   const sc = resolveStage(cfg, opts.stage);
   const clients = createClients(sc);
-  const ledger = new Ledger(clients.raw, clients.doc, {
+  const ledger = new Ledger(clients.ledgerRaw, clients.ledgerDoc, {
     tableName: sc.ledgerTable,
     scope: sc.ledgerScope,
     stage: opts.stage,

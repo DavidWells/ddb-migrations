@@ -69,11 +69,15 @@ npx ddb-migrate status --stage dev
 | `migrationsDir` | Directory holding migration files. Sorted alphabetically. |
 | `ledger.tableName` | Shared migration ledger table. Defaults to `ddb-migrations-ledger`. Deploy one per AWS account/region. |
 | `ledger.scope` | Optional namespace for ledger rows. Defaults to `appName`. |
-| `stages.<name>.region` | AWS region. **Required.** |
+| `ledger.region` | Region the ledger table lives in. Defaults to the active stage's `region`. Set this to centralize the ledger when app tables span regions. |
+| `ledger.endpoint` | AWS endpoint override for the ledger client only (e.g. for a local ledger). |
+| `stages.<name>.region` | AWS region for this stage's app tables. **Required.** |
 | `stages.<name>.accountId` | Optional AWS account ID for audit/guardrail use. Not part of the ledger key. |
 | `stages.<name>.tablePrefix` | Prepended to logical table names from `ctx.tableName('users')`. |
 | `stages.<name>.tables` | Logical → physical table name overrides (wins over `tablePrefix`). |
 | `stages.<name>.ledgerTable` | Stage-specific ledger table override. Most projects should prefer `ledger.tableName`. |
+| `stages.<name>.ledgerRegion` | Stage-specific ledger region override. Wins over `ledger.region`. |
+| `stages.<name>.ledgerEndpoint` | Stage-specific ledger endpoint override. Wins over `ledger.endpoint`. |
 | `stages.<name>.endpoint` | AWS endpoint override (for ddb-local / testcontainers). |
 
 Credentials come from the default AWS SDK credential chain: `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` env vars, IAM role, or `~/.aws/credentials`. Set `AWS_PROFILE` if you need a specific shared profile.
@@ -191,6 +195,22 @@ The framework can't know which calls inside a migration are side-effects, so **m
 The CLI auto-registers `tsx`'s ESM loader before importing `.ts` migration files. As long as `tsx` is installed (it's a runtime dep of this package), `.ts` migrations Just Work — no compile step.
 
 If you'd rather precompile, point `migrationsDir` at a directory of `.mjs` / `.js` files.
+
+## Centralized ledger across regions
+
+By default, the ledger client reuses the stage's region — one ledger per AWS account/region. If your app tables span multiple regions but you want a single shared ledger, set `ledger.region` (or `stages.<name>.ledgerRegion`) to the region where you deployed the ledger table:
+
+```json
+{
+  "ledger": { "tableName": "ddb-migrations-ledger", "region": "us-east-1" },
+  "stages": {
+    "prod-us":  { "region": "us-east-1", "tablePrefix": "myapp-prod-us-"  },
+    "prod-eu":  { "region": "eu-west-1", "tablePrefix": "myapp-prod-eu-"  }
+  }
+}
+```
+
+Each stage still talks to its own app tables in `stage.region`; only the ledger reads and writes route to `ledger.region`. The `region` attribute on each ledger row continues to record the *app* region the migration ran against, so you can still tell which region the side effects landed in.
 
 ## Multi-stage promotion
 
