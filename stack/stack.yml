@@ -1,0 +1,66 @@
+service: operations-ddb-migrations
+
+frameworkVersion: '^3.0.0'
+
+custom:
+  stage: ${opt:stage, 'prod'}
+  region: ${opt:region, 'us-east-1'}
+
+params:
+  default:
+    ledgerTableName: ddb-migrations-ledger
+
+provider:
+  name: aws
+  stage: ${self:custom.stage}
+  region: ${self:custom.region}
+
+resources:
+  Description: >
+    Shared DynamoDB migration ledger for services in this AWS account and
+    region. Migration clients isolate apps/stacks/stages using scoped pk/sk rows.
+
+  Resources:
+    DdbMigrationsLedgerTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      UpdateReplacePolicy: Retain
+      Properties:
+        TableName: ${param:ledgerTableName}
+        BillingMode: PAY_PER_REQUEST
+        SSESpecification:
+          SSEEnabled: true
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        AttributeDefinitions:
+          - AttributeName: pk
+            AttributeType: S
+          - AttributeName: sk
+            AttributeType: S
+        KeySchema:
+          - AttributeName: pk
+            KeyType: HASH
+          - AttributeName: sk
+            KeyType: RANGE
+        Tags:
+          - Key: service
+            Value: operations-ddb-migrations
+          - Key: component
+            Value: ddb-migrations-ledger
+          - Key: owner-stack
+            Value: ${self:service}
+
+  Outputs:
+    StackName:
+      Description: Stack name.
+      Value: !Sub '${AWS::StackName}'
+    LedgerTableName:
+      Description: Shared DynamoDB migration ledger table name.
+      Value: !Ref DdbMigrationsLedgerTable
+      Export:
+        Name: !Sub '${AWS::StackName}-LedgerTableName'
+    LedgerTableArn:
+      Description: Shared DynamoDB migration ledger table ARN.
+      Value: !GetAtt DdbMigrationsLedgerTable.Arn
+      Export:
+        Name: !Sub '${AWS::StackName}-LedgerTableArn'

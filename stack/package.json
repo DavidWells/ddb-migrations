@@ -1,0 +1,16 @@
+{
+  "name": "ddb-migrations-ledger-stack",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "deploy": "osls deploy",
+    "package": "osls package",
+    "remove": "osls remove"
+  },
+  "devDependencies": {
+    "configorama": "^0.10.4",
+    "minimist": "^1.2.8",
+    "osls": "^3.40.0"
+  }
+}

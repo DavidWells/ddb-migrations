@@ -16,6 +16,8 @@
   },
   "files": [
     "dist/**/*",
+    "examples/**/*",
+    "stack/**/*",
     "README.md",
     "LICENSE"
   ],
