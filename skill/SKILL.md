@@ -61,6 +61,8 @@ Recommended shape:
 
 Use `tables` overrides when table names do not share a prefix. Use `ledger.scope` only when multiple apps intentionally share a ledger namespace.
 
+If app tables span multiple regions but the project wants one shared ledger, set `ledger.region` to where the ledger table lives. Each stage still talks to its app tables in `stage.region`; ledger reads/writes route to `ledger.region`. Per-stage `ledgerRegion` / `ledgerEndpoint` override the global value. Only reach for this when stages actually use different regions — for single-region projects the default (ledger follows stage) is correct.
+
 ## Writing Migrations
 
 Import the context type from the package:
