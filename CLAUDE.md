@@ -4,7 +4,7 @@ Notes for AI agents working on this repo.
 
 ## Layout
 
-- `src/lib/` — library code, importable as `ddb-migrations`
+- `src/lib/` — library code, importable as `ddb-migration-tools`
   - `types.ts` — public types (Config, MigrationContext, LedgerEntry)
   - `config.ts` — config loader, stage / table-name resolution
   - `ddb.ts` — SDK v3 client factory
@@ -19,8 +19,8 @@ Notes for AI agents working on this repo.
 ## Conventions
 
 - ESM only (`"type": "module"`). All internal imports use `.js` extensions in source — TS resolves them, Node runs the compiled `.js`.
-- Migration ids are timestamped: `YYYY-MM-DD-HHMMSS-<slug>`. Lexicographic sort = chronological order.
-- Ledger table primary key: single string attribute `migrationId`. Pay-per-request billing mode.
+- Migration ids are timestamped. Current `create` output uses `YYYY-MM-DD_HH-MM-<slug>`. Lexicographic sort = chronological order.
+- Ledger table primary key is stage-scoped: `pk = SCOPE#<scope>#STAGE#<stage>`, `sk = MIGRATION#<migrationId>`.
 - Drift detection: SHA-256 of the migration file at apply time, compared on each `status` / `up`.
 
 ## Adding a new CLI verb

@@ -17,6 +17,14 @@ A small, modern alternative to [`dynamo-data-migrations`](https://github.com/tec
 npm install --save-dev ddb-migration-tools
 ```
 
+## Agent skill
+
+Install the companion agent skill for Claude Code, Codex, Cursor, and other Agent Skills-compatible tools:
+
+```bash
+npx skills add DavidWells/ddb-migrations
+```
+
 ## Quick start
 
 ```bash
