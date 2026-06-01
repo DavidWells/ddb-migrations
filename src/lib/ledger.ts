@@ -10,17 +10,33 @@ import {
   DynamoDBDocumentClient,
   GetCommand,
   PutCommand,
-  ScanCommand,
+  QueryCommand,
   UpdateCommand,
 } from '@aws-sdk/lib-dynamodb';
 import type { LedgerEntry } from './types.js';
 
+export type LedgerOptions = {
+  tableName: string;
+  scope: string;
+  stage: string;
+  accountId?: string;
+  region?: string;
+};
+
 export class Ledger {
+  private readonly pk: string;
+
   constructor(
     private readonly raw: DynamoDBClient,
     private readonly doc: DynamoDBDocumentClient,
-    readonly tableName: string,
-  ) {}
+    private readonly options: LedgerOptions,
+  ) {
+    this.pk = ledgerPk(options.scope, options.stage);
+  }
+
+  get tableName(): string {
+    return this.options.tableName;
+  }
 
   async ensureExists(): Promise<void> {
     try {
@@ -32,8 +48,14 @@ export class Ledger {
     await this.raw.send(
       new CreateTableCommand({
         TableName: this.tableName,
-        AttributeDefinitions: [{ AttributeName: 'migrationId', AttributeType: 'S' }],
-        KeySchema: [{ AttributeName: 'migrationId', KeyType: 'HASH' }],
+        AttributeDefinitions: [
+          { AttributeName: 'pk', AttributeType: 'S' },
+          { AttributeName: 'sk', AttributeType: 'S' },
+        ],
+        KeySchema: [
+          { AttributeName: 'pk', KeyType: 'HASH' },
+          { AttributeName: 'sk', KeyType: 'RANGE' },
+        ],
         BillingMode: 'PAY_PER_REQUEST',
       }),
     );
@@ -48,8 +70,11 @@ export class Ledger {
     let cursor: Record<string, unknown> | undefined;
     do {
       const resp = await this.doc.send(
-        new ScanCommand({
+        new QueryCommand({
           TableName: this.tableName,
+          KeyConditionExpression: '#pk = :pk',
+          ExpressionAttributeNames: { '#pk': 'pk' },
+          ExpressionAttributeValues: { ':pk': this.pk },
           ExclusiveStartKey: cursor,
         }),
       );
@@ -61,7 +86,7 @@ export class Ledger {
 
   async get(migrationId: string): Promise<LedgerEntry | undefined> {
     const resp = await this.doc.send(
-      new GetCommand({ TableName: this.tableName, Key: { migrationId } }),
+      new GetCommand({ TableName: this.tableName, Key: this.key(migrationId) }),
     );
     return resp.Item as LedgerEntry | undefined;
   }
@@ -75,14 +100,21 @@ export class Ledger {
       new PutCommand({
         TableName: this.tableName,
         Item: {
+          pk: this.pk,
+          sk: ledgerSk(entry.migrationId),
+          scope: this.options.scope,
+          stage: this.options.stage,
           migrationId: entry.migrationId,
           checksum: entry.checksum,
           appliedAt: new Date().toISOString(),
           status: 'in_progress' satisfies LedgerEntry['status'],
           appliedBy: entry.appliedBy,
+          accountId: this.options.accountId,
+          region: this.options.region,
         },
         // Allow overwrite if previous run was failed/in_progress; refuse if already completed.
-        ConditionExpression: 'attribute_not_exists(migrationId) OR #status <> :completed',
+        ConditionExpression:
+          '(attribute_not_exists(pk) AND attribute_not_exists(sk)) OR #status <> :completed',
         ExpressionAttributeNames: { '#status': 'status' },
         ExpressionAttributeValues: { ':completed': 'completed' },
       }),
@@ -100,7 +132,7 @@ export class Ledger {
     await this.doc.send(
       new UpdateCommand({
         TableName: this.tableName,
-        Key: { migrationId },
+        Key: this.key(migrationId),
         UpdateExpression: `SET #status = :s, durationMs = :d${itemsClause} REMOVE errorMessage`,
         ExpressionAttributeNames: { '#status': 'status' },
         ExpressionAttributeValues: values,
@@ -112,7 +144,7 @@ export class Ledger {
     await this.doc.send(
       new UpdateCommand({
         TableName: this.tableName,
-        Key: { migrationId },
+        Key: this.key(migrationId),
         UpdateExpression: 'SET #status = :s, errorMessage = :e',
         ExpressionAttributeNames: { '#status': 'status' },
         ExpressionAttributeValues: { ':s': 'failed', ':e': errorMessage },
@@ -122,7 +154,7 @@ export class Ledger {
 
   async remove(migrationId: string): Promise<void> {
     await this.doc.send(
-      new DeleteCommand({ TableName: this.tableName, Key: { migrationId } }),
+      new DeleteCommand({ TableName: this.tableName, Key: this.key(migrationId) }),
     );
   }
 
@@ -130,7 +162,7 @@ export class Ledger {
     await this.doc.send(
       new UpdateCommand({
         TableName: this.tableName,
-        Key: { migrationId },
+        Key: this.key(migrationId),
         UpdateExpression: 'SET checkpoint = :v',
         ExpressionAttributeValues: { ':v': value },
       }),
@@ -143,4 +175,16 @@ export class Ledger {
     const entry = await this.get(migrationId);
     return entry?.checkpoint as T | undefined;
   }
+
+  private key(migrationId: string): { pk: string; sk: string } {
+    return { pk: this.pk, sk: ledgerSk(migrationId) };
+  }
+}
+
+export function ledgerPk(scope: string, stage: string): string {
+  return `SCOPE#${scope}#STAGE#${stage}`;
+}
+
+export function ledgerSk(migrationId: string): string {
+  return `MIGRATION#${migrationId}`;
 }

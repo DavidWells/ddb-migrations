@@ -17,20 +17,32 @@ export async function down(ctx: MigrationContext): Promise<void> {
 }
 `;
 
+export type CreateOptions = {
+  cwd?: string;
+  format?: 'directory' | 'file';
+};
+
 export async function create(
   description: string,
-  cwd: string = process.cwd(),
+  options: string | CreateOptions = process.cwd(),
 ): Promise<string> {
+  const cwd = typeof options === 'string' ? options : (options.cwd ?? process.cwd());
+  const format = typeof options === 'string' ? 'directory' : (options.format ?? 'directory');
   const cfg = await loadConfig(cwd);
   const slug = slugify(description);
   if (!slug) throw new Error('Description must contain at least one alphanumeric character.');
-  const id = `${timestamp()}-${slug}`;
-  const fileName = `${id}.ts`;
+  const id = `${timestamp()}_${slug}`;
   const dir = path.resolve(cwd, cfg.migrationsDir);
   await fs.mkdir(dir, { recursive: true });
-  const fullPath = path.join(dir, fileName);
+
+  const fullPath =
+    format === 'directory'
+      ? path.join(dir, id, 'index.ts')
+      : path.join(dir, `${id}.ts`);
+  if (format === 'directory') await fs.mkdir(path.dirname(fullPath), { recursive: true });
+
   const body = TEMPLATE.replace('__DESCRIPTION__', description.replace(/'/g, "\\'"));
-  await fs.writeFile(fullPath, body);
+  await fs.writeFile(fullPath, body, { flag: 'wx' });
   return path.relative(cwd, fullPath);
 }
 
@@ -39,8 +51,8 @@ export function timestamp(date: Date = new Date()): string {
   return (
     `${date.getUTCFullYear()}-` +
     `${pad(date.getUTCMonth() + 1)}-` +
-    `${pad(date.getUTCDate())}-` +
-    `${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())}`
+    `${pad(date.getUTCDate())}_` +
+    `${pad(date.getUTCHours())}-${pad(date.getUTCMinutes())}`
   );
 }
 

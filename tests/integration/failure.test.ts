@@ -45,6 +45,7 @@ beforeAll(async () => {
   const config: Config = {
     appName: APP,
     migrationsDir: 'migrations',
+    ledger: { tableName: LEDGER_TABLE },
     stages: { dev: { region: REGION, endpoint: ENDPOINT } },
   };
   writeFileSync(

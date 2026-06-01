@@ -5,6 +5,7 @@ import type { Config } from '../../src/lib/types.js';
 const cfg: Config = {
   appName: 'myapp',
   migrationsDir: 'migrations',
+  ledger: { tableName: 'shared-ledger', scope: 'shared-scope' },
   stages: {
     dev: { region: 'us-east-1', tablePrefix: 'myapp-dev-' },
     prod: {
@@ -22,7 +23,16 @@ describe('resolveStage', () => {
   });
 
   it('falls back to the default ledger table name', () => {
-    expect(resolveStage(cfg, 'dev').ledgerTable).toBe('myapp-migrations-dev');
+    expect(resolveStage({ ...cfg, ledger: undefined }, 'dev').ledgerTable).toBe('ddb-migrations-ledger');
+  });
+
+  it('uses the top-level shared ledger table when configured', () => {
+    expect(resolveStage(cfg, 'dev').ledgerTable).toBe('shared-ledger');
+  });
+
+  it('resolves the ledger scope from config or appName', () => {
+    expect(resolveStage(cfg, 'dev').ledgerScope).toBe('shared-scope');
+    expect(resolveStage({ ...cfg, ledger: undefined }, 'dev').ledgerScope).toBe('myapp');
   });
 
   it('throws for an unknown stage', () => {

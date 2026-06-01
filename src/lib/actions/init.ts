@@ -4,6 +4,9 @@ import path from 'node:path';
 const CONFIG_TEMPLATE = `{
   "appName": "my-app",
   "migrationsDir": "migrations",
+  "ledger": {
+    "tableName": "ddb-migrations-ledger"
+  },
   "stages": {
     "dev": {
       "region": "us-east-1",

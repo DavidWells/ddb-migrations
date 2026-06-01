@@ -26,7 +26,13 @@ export async function up(opts: UpOptions): Promise<UpResult> {
   const cfg = await loadConfig(cwd);
   const sc = resolveStage(cfg, opts.stage);
   const clients = createClients(sc);
-  const ledger = new Ledger(clients.raw, clients.doc, sc.ledgerTable);
+  const ledger = new Ledger(clients.raw, clients.doc, {
+    tableName: sc.ledgerTable,
+    scope: sc.ledgerScope,
+    stage: opts.stage,
+    accountId: sc.accountId,
+    region: sc.region,
+  });
   await ledger.ensureExists();
 
   const files = await listMigrationFiles(cfg, cwd);

@@ -25,9 +25,10 @@ program
 program
   .command('create <description...>')
   .description('Create a new migration file with a timestamped id.')
-  .action(async (parts: string[]) => {
+  .option('--flat', 'Create a single migration file instead of a migration directory.', false)
+  .action(async (parts: string[], opts: { flat: boolean }) => {
     const desc = parts.join(' ');
-    const file = await create(desc);
+    const file = await create(desc, { format: opts.flat ? 'file' : 'directory' });
     console.log(pc.green(`Created ${file}`));
   });
 

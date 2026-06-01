@@ -72,7 +72,8 @@ export function resolveStage(cfg: Config, stage: string): ResolvedStage {
   return {
     ...sc,
     stage,
-    ledgerTable: sc.ledgerTable ?? `${cfg.appName}-migrations-${stage}`,
+    ledgerTable: sc.ledgerTable ?? cfg.ledger?.tableName ?? 'ddb-migrations-ledger',
+    ledgerScope: cfg.ledger?.scope ?? cfg.appName,
   };
 }
 

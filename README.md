@@ -6,7 +6,7 @@ A small, modern alternative to [`dynamo-data-migrations`](https://github.com/tec
 
 - AWS SDK v3 (the v2-based original is on an EOL SDK)
 - Stage-based config (`dev` / `staging` / `prod`) instead of AWS credential profiles
-- Per-stage ledger table (`${appName}-migrations-${stage}` by default)
+- Shared account/region ledger table with app/stage-scoped rows
 - SHA-256 drift detection on every applied migration
 - Resumable migrations via a `checkpoint()` helper on the ledger row
 - TypeScript-native: writes `.ts` migration files and runs them via `tsx`'s ESM loader, no compile step
@@ -35,6 +35,9 @@ npx ddb-migrate status --stage dev
 {
   "appName": "my-app",
   "migrationsDir": "migrations",
+  "ledger": {
+    "tableName": "ddb-migrations-ledger"
+  },
   "stages": {
     "dev": {
       "region": "us-east-1",
@@ -54,12 +57,15 @@ npx ddb-migrate status --stage dev
 
 | Field | Description |
 | --- | --- |
-| `appName` | Used to derive the default ledger table name. |
+| `appName` | Default app/scope namespace for ledger rows. |
 | `migrationsDir` | Directory holding migration files. Sorted alphabetically. |
+| `ledger.tableName` | Shared migration ledger table. Defaults to `ddb-migrations-ledger`. Deploy one per AWS account/region. |
+| `ledger.scope` | Optional namespace for ledger rows. Defaults to `appName`. |
 | `stages.<name>.region` | AWS region. **Required.** |
+| `stages.<name>.accountId` | Optional AWS account ID for audit/guardrail use. Not part of the ledger key. |
 | `stages.<name>.tablePrefix` | Prepended to logical table names from `ctx.tableName('users')`. |
 | `stages.<name>.tables` | Logical → physical table name overrides (wins over `tablePrefix`). |
-| `stages.<name>.ledgerTable` | Override the default ledger table name. |
+| `stages.<name>.ledgerTable` | Stage-specific ledger table override. Most projects should prefer `ledger.tableName`. |
 | `stages.<name>.endpoint` | AWS endpoint override (for ddb-local / testcontainers). |
 
 Credentials come from the default AWS SDK credential chain: `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` env vars, IAM role, or `~/.aws/credentials`. Set `AWS_PROFILE` if you need a specific shared profile.
@@ -68,8 +74,26 @@ Credentials come from the default AWS SDK credential chain: `AWS_ACCESS_KEY_ID` 
 
 For more patterns — idempotent backfills, expand-and-contract renames, parallel scans with checkpoints, GSI adds — see [`examples/`](./examples/).
 
+Migrations may be single files:
+
+```txt
+migrations/
+  2026-05-04_11-30_backfill_schema_version.ts
+```
+
+Or directories with an `index` entrypoint and colocated fixtures/helpers:
+
+```txt
+migrations/
+  2026-05-04_11-30_backfill_schema_version/
+    index.ts
+    fixture.json
+```
+
+Directory migration checksums include every non-hidden file under the migration directory, so fixture/helper drift is detected after a migration has been applied.
+
 ```ts
-// migrations/2026-05-04-113000-backfill-schema-version.ts
+// migrations/2026-05-04_11-30_backfill_schema_version/index.ts
 import type { MigrationContext } from 'ddb-migrations';
 
 export const description = 'Backfill schemaVersion=1 on User items';
@@ -161,7 +185,16 @@ If you'd rather precompile, point `migrationsDir` at a directory of `.mjs` / `.j
 
 ## Multi-stage promotion
 
-Each stage has its own ledger table, so promotion looks like:
+By default, each AWS account/region has one shared ledger table, while app/stage isolation lives in the item keys:
+
+```txt
+pk = SCOPE#<ledger.scope or appName>#STAGE#<stage>
+sk = MIGRATION#<migrationId>
+```
+
+`accountId` and `region` are stored as item attributes when configured, but are not part of the primary key. The account is implied by the DynamoDB table you are writing to.
+
+Promotion looks like:
 
 ```bash
 # developer iterating
@@ -174,7 +207,7 @@ ddb-migrate up --stage staging
 ddb-migrate up --stage prod
 ```
 
-Files in `migrations/` are sorted lexicographically by id, so the timestamped prefix from `create` makes ordering deterministic across stages. Don't reorder or rename files after they've been applied somewhere — drift detection will trip.
+Files and migration directories in `migrations/` are sorted lexicographically by id, so the timestamped prefix from `create` makes ordering deterministic across stages. Don't reorder or rename migrations after they've been applied somewhere — drift detection will trip.
 
 ## Why not `dynamo-data-migrations`?
 
@@ -182,7 +215,7 @@ Files in `migrations/` are sorted lexicographically by id, so the timestamped pr
 | --- | --- | --- |
 | AWS SDK | v2 (EOL) | v3 |
 | Multi-env model | AWS profiles | Logical stages with table prefixes |
-| Ledger table | One hard-coded name per account | One per stage |
+| Ledger table | One hard-coded name per account | One shared table per account/region, scoped by app/stage keys |
 | Drift detection | None | SHA-256 per applied entry |
 | Resumable migrations | None | `ctx.checkpoint()` |
 | TS migrations | Custom `ts-import` | `tsx` ESM loader |

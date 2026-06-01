@@ -20,13 +20,13 @@ describe('slugify', () => {
 });
 
 describe('timestamp', () => {
-  it('formats UTC date as YYYY-MM-DD-HHMMSS', () => {
+  it('formats UTC date as YYYY-MM-DD_HH-MM', () => {
     const t = timestamp(new Date(Date.UTC(2026, 4, 4, 11, 30, 45)));
-    expect(t).toBe('2026-05-04-113045');
+    expect(t).toBe('2026-05-04_11-30');
   });
 
   it('zero-pads single-digit components', () => {
     const t = timestamp(new Date(Date.UTC(2026, 0, 1, 1, 2, 3)));
-    expect(t).toBe('2026-01-01-010203');
+    expect(t).toBe('2026-01-01_01-02');
   });
 });
