@@ -94,6 +94,7 @@ Directory migration checksums include every non-hidden file under the migration 
 
 ```ts
 // migrations/2026-05-04_11-30_backfill_schema_version/index.ts
+import { ScanCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import type { MigrationContext } from 'ddb-migrations';
 
 export const description = 'Backfill schemaVersion=1 on User items';

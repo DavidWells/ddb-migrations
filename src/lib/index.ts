@@ -15,3 +15,4 @@ export { down, type DownOptions, type DownResult } from './actions/down.js';
 export { status, type StatusItem, type StatusOptions } from './actions/status.js';
 export { init, type InitResult } from './actions/init.js';
 export { create } from './actions/create.js';
+export { VERSION } from './version.js';

@@ -3,12 +3,13 @@ import { Command, Option } from 'commander';
 import Table from 'cli-table3';
 import pc from 'picocolors';
 import { create, down, init, status, up } from '../lib/index.js';
+import { VERSION } from '../lib/version.js';
 
 const program = new Command();
 program
   .name('ddb-migrate')
   .description('Stage-aware DynamoDB migrations.')
-  .version('0.1.0');
+  .version(VERSION);
 
 const stageOpt = new Option('-s, --stage <name>', 'Stage to operate on').makeOptionMandatory(true);
 
