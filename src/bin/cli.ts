@@ -1,17 +1,33 @@
 #!/usr/bin/env node
+import path from 'node:path';
 import { Command, Option } from 'commander';
 import Table from 'cli-table3';
 import pc from 'picocolors';
 import { onShutdown, onShutdownError } from '@davidwells/graceful-exit';
 import {
+  clearCheckpoint,
   create,
   createMigrationShutdownController,
+  doctor,
   down,
+  findConfig,
   init,
+  plan,
+  showCheckpoint,
   status,
   up,
+  type DoctorCheck,
+  type MigrationProgressEvent,
 } from '../lib/index.js';
 import { VERSION } from '../lib/version.js';
+
+type GlobalOptions = {
+  cwd?: string;
+};
+
+type JsonOption = {
+  json?: boolean;
+};
 
 const shutdown = createMigrationShutdownController();
 let activeCommand: Promise<unknown> | undefined;
@@ -23,15 +39,33 @@ const program = new Command();
 program
   .name('ddb-migrate')
   .description('Stage-aware DynamoDB migrations.')
-  .version(VERSION);
+  .version(VERSION)
+  .option('-C, --cwd <path>', 'Project directory containing ddb-migrations.config.*')
+  .showHelpAfterError();
 
 const stageOpt = new Option('-s, --stage <name>', 'Stage to operate on').makeOptionMandatory(true);
+
+program
+  .command('current')
+  .description('Print the resolved CLI context.')
+  .option('--json', 'Print JSON output.', false)
+  .action(async (opts: JsonOption) => {
+    const cwd = resolveCwd();
+    const result = {
+      cwd,
+      configPath: await findConfig(cwd).catch(() => undefined),
+      version: VERSION,
+      bin: process.argv[1],
+      node: process.version,
+    };
+    printCurrent(result, !!opts.json);
+  });
 
 program
   .command('init')
   .description('Scaffold ddb-migrations.config.json and a migrations/ directory.')
   .action(async () => {
-    const r = await init();
+    const r = await init(resolveCwd());
     console.log(pc.green(`Created ${r.configPath}`));
     console.log(pc.green(`Created ${r.migrationsDir}/`));
     console.log('Next: edit ddb-migrations.config.json, then run `ddb-migrate create "<description>"`.');
@@ -43,41 +77,52 @@ program
   .option('--flat', 'Create a single migration file instead of a migration directory.', false)
   .action(async (parts: string[], opts: { flat: boolean }) => {
     const desc = parts.join(' ');
-    const file = await create(desc, { format: opts.flat ? 'file' : 'directory' });
+    const file = await create(desc, { cwd: resolveCwd(), format: opts.flat ? 'file' : 'directory' });
     console.log(pc.green(`Created ${file}`));
   });
 
 program
   .command('status')
   .addOption(stageOpt)
+  .option('--json', 'Print JSON output.', false)
   .description('Print the migration ledger for a stage.')
-  .action(async (opts: { stage: string }) => {
-    const items = await status({ stage: opts.stage });
-    if (items.length === 0) {
-      console.log('No migrations found.');
+  .action(async (opts: { stage: string } & JsonOption) => {
+    const items = await status({ stage: opts.stage, cwd: resolveCwd() });
+    if (opts.json) {
+      printJson(items);
       return;
     }
-    const table = new Table({ head: ['Migration', 'Status', 'Applied At', 'Checksum'] });
-    for (const it of items) {
-      const statusCell =
-        it.status === 'completed'
-          ? pc.green('completed')
-          : it.status === 'pending'
-            ? pc.yellow('pending')
-            : it.status === 'in_progress'
-              ? pc.cyan('in_progress')
-              : it.status === 'failed'
-                ? pc.red('failed')
-                : pc.red('orphan');
-      const ck =
-        it.checksumMatch === true
-          ? pc.green('match')
-          : it.checksumMatch === false
-            ? pc.red('DRIFT')
-            : pc.gray('-');
-      table.push([it.id, statusCell, it.appliedAt ?? '-', ck]);
+    printStatusTable(items);
+  });
+
+program
+  .command('plan')
+  .addOption(stageOpt)
+  .option('--to <id>', 'Plan migrations only up to and including this id.')
+  .option('--json', 'Print JSON output.', false)
+  .description('Print the migration execution plan without running migration code.')
+  .action(async (opts: { stage: string; to?: string } & JsonOption) => {
+    const result = await plan({ stage: opts.stage, cwd: resolveCwd(), to: opts.to });
+    if (opts.json) {
+      printJson(result);
+      return;
     }
-    console.log(table.toString());
+    printPlan(result);
+  });
+
+program
+  .command('doctor')
+  .addOption(stageOpt)
+  .option('--json', 'Print JSON output.', false)
+  .description('Run config, ledger, AWS identity, and migration health checks.')
+  .action(async (opts: { stage: string } & JsonOption) => {
+    const result = await doctor({ stage: opts.stage, cwd: resolveCwd() });
+    if (opts.json) {
+      printJson(result);
+    } else {
+      printDoctor(result.checks);
+    }
+    if (!result.ok) process.exitCode = 1;
   });
 
 program
@@ -85,35 +130,28 @@ program
   .addOption(stageOpt)
   .option('--to <id>', 'Apply migrations only up to and including this id.')
   .option('--dry-run', "Don't write to the ledger; pass dryRun=true to migrations.", false)
+  .option('--force', 'Bypass prod-stage non-dry-run safety guard.', false)
+  .option('--json', 'Print JSON output.', false)
   .description('Apply pending migrations.')
-  .action(async (opts: { stage: string; to?: string; dryRun: boolean }) => {
+  .action(async (opts: { stage: string; to?: string; dryRun: boolean; force: boolean } & JsonOption) => {
+    requireForceForUp(opts.stage, opts.dryRun, opts.force);
     const promise = up({
       stage: opts.stage,
+      cwd: resolveCwd(),
       to: opts.to,
       dryRun: opts.dryRun,
       signal: shutdown.signal,
+      onProgress: opts.json ? undefined : printProgress,
     });
-    activeCommand = promise
-      .then(
-        () => undefined,
-        () => undefined,
-      )
-      .finally(() => {
-        activeCommand = undefined;
-      });
+    activeCommand = trackActive(promise);
     const result = await promise;
-    for (const id of result.applied) console.log(pc.green(`✓ ${id}`));
-    for (const id of result.skipped) console.log(pc.gray(`· ${id} (skipped, --to=${opts.to})`));
-    if (result.failed) {
-      console.error(pc.red(`✗ ${result.failed.id} — ${result.failed.message}`));
-      process.exitCode = 1;
-    } else if (result.interrupted) {
-      const prefix = result.interrupted.id ? `${result.interrupted.id} — ` : '';
-      console.error(pc.yellow(`Interrupted: ${prefix}${result.interrupted.message}`));
-      process.exitCode = 130;
-    } else if (result.applied.length === 0) {
-      console.log(pc.gray('Nothing to apply.'));
+    if (opts.json) {
+      printJson(result);
+    } else {
+      printUpResult(result, opts.to);
     }
+    if (result.failed) process.exitCode = 1;
+    if (result.interrupted) process.exitCode = 130;
   });
 
 program
@@ -126,16 +164,66 @@ program
     1,
   )
   .option('--dry-run', "Don't write to the ledger; pass dryRun=true to migrations.", false)
+  .option('--force', 'Required for non-dry-run rollback.', false)
+  .option('--json', 'Print JSON output.', false)
   .description('Roll back the last N completed migrations.')
-  .action(async (opts: { stage: string; shift: number; dryRun: boolean }) => {
-    const result = await down({ stage: opts.stage, shift: opts.shift, dryRun: opts.dryRun });
-    for (const id of result.rolledBack) console.log(pc.green(`↓ ${id}`));
-    if (result.failed) {
-      console.error(pc.red(`✗ ${result.failed.id} — ${result.failed.message}`));
-      process.exitCode = 1;
-    } else if (result.rolledBack.length === 0) {
-      console.log(pc.gray('Nothing to roll back.'));
+  .action(async (opts: { stage: string; shift: number; dryRun: boolean; force: boolean } & JsonOption) => {
+    requireForceForDown(opts.dryRun, opts.force);
+    const promise = down({
+      stage: opts.stage,
+      cwd: resolveCwd(),
+      shift: opts.shift,
+      dryRun: opts.dryRun,
+      signal: shutdown.signal,
+      onProgress: opts.json ? undefined : printProgress,
+    });
+    activeCommand = trackActive(promise);
+    const result = await promise;
+    if (opts.json) {
+      printJson(result);
+    } else {
+      printDownResult(result);
     }
+    if (result.failed) process.exitCode = 1;
+    if (result.interrupted) process.exitCode = 130;
+  });
+
+const checkpointCommand = program
+  .command('checkpoint')
+  .description('Inspect or clear a migration checkpoint.');
+
+checkpointCommand
+  .command('show <migrationId>')
+  .addOption(stageOpt)
+  .option('--json', 'Print JSON output.', false)
+  .description('Print the saved checkpoint for a migration.')
+  .action(async (migrationId: string, opts: { stage: string } & JsonOption) => {
+    const result = await showCheckpoint({ stage: opts.stage, cwd: resolveCwd(), migrationId });
+    if (opts.json) {
+      printJson(result);
+      return;
+    }
+    if (!result.found) {
+      console.log(pc.gray(`No checkpoint found for ${migrationId}.`));
+      return;
+    }
+    printJson(result.checkpoint);
+  });
+
+checkpointCommand
+  .command('clear <migrationId>')
+  .addOption(stageOpt)
+  .option('--force', 'Required to clear a saved checkpoint.', false)
+  .option('--json', 'Print JSON output.', false)
+  .description('Remove the saved checkpoint for a migration.')
+  .action(async (migrationId: string, opts: { stage: string; force: boolean } & JsonOption) => {
+    if (!opts.force) throw new Error('checkpoint clear requires --force.');
+    const result = await clearCheckpoint({ stage: opts.stage, cwd: resolveCwd(), migrationId });
+    if (opts.json) {
+      printJson(result);
+      return;
+    }
+    console.log(result.cleared ? pc.green(`Cleared checkpoint for ${migrationId}.`) : pc.gray(`No checkpoint found for ${migrationId}.`));
   });
 
 program.parseAsync(process.argv).catch((err: unknown) => {
@@ -143,6 +231,142 @@ program.parseAsync(process.argv).catch((err: unknown) => {
   console.error(pc.red(message));
   process.exit(1);
 });
+
+function resolveCwd(): string {
+  const opts = program.opts<GlobalOptions>();
+  return path.resolve(opts.cwd ?? process.env.DDB_MIGRATE_CWD ?? process.cwd());
+}
+
+function printJson(value: unknown): void {
+  console.log(JSON.stringify(value, null, 2));
+}
+
+function printStatusTable(items: Awaited<ReturnType<typeof status>>): void {
+  if (items.length === 0) {
+    console.log('No migrations found.');
+    return;
+  }
+  const table = new Table({ head: ['Migration', 'Status', 'Applied At', 'Checksum'] });
+  for (const it of items) {
+    table.push([it.id, colorStatus(it.status), it.appliedAt ?? '-', colorChecksum(it.checksumMatch)]);
+  }
+  console.log(table.toString());
+}
+
+function printPlan(result: Awaited<ReturnType<typeof plan>>): void {
+  console.log(pc.bold(`Plan for ${result.stage} (${result.region})`));
+  console.log(`cwd: ${result.cwd}`);
+  console.log(`ledger: ${result.ledgerTable} / ${result.ledgerScope}`);
+  const table = new Table({ head: ['Migration', 'Status', 'Run', 'Reason'] });
+  for (const migration of result.migrations) {
+    table.push([
+      migration.id,
+      colorStatus(migration.status),
+      migration.willRun ? pc.green('yes') : pc.gray('no'),
+      migration.reason,
+    ]);
+  }
+  console.log(table.toString());
+}
+
+function printDoctor(checks: DoctorCheck[]): void {
+  const table = new Table({ head: ['Check', 'Status', 'Message'] });
+  for (const check of checks) {
+    table.push([check.name, colorCheck(check.status), check.message]);
+  }
+  console.log(table.toString());
+}
+
+function printUpResult(result: Awaited<ReturnType<typeof up>>, to?: string): void {
+  for (const id of result.applied) console.log(pc.green(`✓ ${id}`));
+  for (const id of result.skipped) console.log(pc.gray(`· ${id} (skipped${to ? `, --to=${to}` : ''})`));
+  if (result.failed) console.error(pc.red(`✗ ${result.failed.id} — ${result.failed.message}`));
+  else if (result.interrupted) {
+    const prefix = result.interrupted.id ? `${result.interrupted.id} — ` : '';
+    console.error(pc.yellow(`Interrupted: ${prefix}${result.interrupted.message}`));
+  } else if (result.applied.length === 0) console.log(pc.gray('Nothing to apply.'));
+}
+
+function printDownResult(result: Awaited<ReturnType<typeof down>>): void {
+  for (const id of result.rolledBack) console.log(pc.green(`↓ ${id}`));
+  if (result.failed) console.error(pc.red(`✗ ${result.failed.id} — ${result.failed.message}`));
+  else if (result.interrupted) {
+    const prefix = result.interrupted.id ? `${result.interrupted.id} — ` : '';
+    console.error(pc.yellow(`Interrupted: ${prefix}${result.interrupted.message}`));
+  } else if (result.rolledBack.length === 0) console.log(pc.gray('Nothing to roll back.'));
+}
+
+function printCurrent(
+  result: { cwd: string; configPath?: string; version: string; bin: string | undefined; node: string },
+  json: boolean,
+): void {
+  if (json) {
+    printJson(result);
+    return;
+  }
+  console.log(`cwd: ${result.cwd}`);
+  console.log(`config: ${result.configPath ?? '<not found>'}`);
+  console.log(`version: ${result.version}`);
+  console.log(`bin: ${result.bin ?? '<unknown>'}`);
+  console.log(`node: ${result.node}`);
+}
+
+function printProgress(event: MigrationProgressEvent): void {
+  if (event.message) {
+    console.log(pc.gray(`[${event.migrationId ?? 'migration'}] ${event.message}`));
+    return;
+  }
+  const parts = Object.entries(event)
+    .filter(([key, value]) => key !== 'migrationId' && value !== undefined)
+    .map(([key, value]) => `${key}=${String(value)}`);
+  if (parts.length > 0) console.log(pc.gray(`[${event.migrationId ?? 'migration'}] ${parts.join(' ')}`));
+}
+
+function colorStatus(status: string): string {
+  if (status === 'completed') return pc.green(status);
+  if (status === 'pending') return pc.yellow(status);
+  if (status === 'in_progress') return pc.cyan(status);
+  if (status === 'failed' || status === 'orphan') return pc.red(status);
+  return status;
+}
+
+function colorChecksum(match: boolean | null): string {
+  if (match === true) return pc.green('match');
+  if (match === false) return pc.red('DRIFT');
+  return pc.gray('-');
+}
+
+function colorCheck(status: DoctorCheck['status']): string {
+  if (status === 'pass') return pc.green(status);
+  if (status === 'warn') return pc.yellow(status);
+  if (status === 'fail') return pc.red(status);
+  return pc.gray(status);
+}
+
+function requireForceForUp(stage: string, dryRun: boolean, force: boolean): void {
+  if (dryRun || force || !isProdLike(stage)) return;
+  throw new Error(`Non-dry-run up for stage '${stage}' requires --force.`);
+}
+
+function requireForceForDown(dryRun: boolean, force: boolean): void {
+  if (dryRun || force) return;
+  throw new Error('Non-dry-run down requires --force.');
+}
+
+function isProdLike(stage: string): boolean {
+  return stage.toLowerCase().includes('prod');
+}
+
+function trackActive<T>(promise: Promise<T>): Promise<undefined> {
+  return promise
+    .then(
+      () => undefined,
+      () => undefined,
+    )
+    .finally(() => {
+      activeCommand = undefined;
+    });
+}
 
 function installSignalHandlers(): void {
   onShutdown('ddb-migrate-active-command', async () => {

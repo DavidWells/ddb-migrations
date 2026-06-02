@@ -9,6 +9,8 @@ import {
   createMigrationShutdownController,
   isMigrationInterruptedError,
 } from '../shutdown.js';
+import { assertConfiguredAccount } from '../aws-identity.js';
+import type { MigrationProgressEvent } from '../types.js';
 
 export type UpOptions = {
   stage: string;
@@ -19,6 +21,10 @@ export type UpOptions = {
   cwd?: string;
   /** Cooperative shutdown signal. The current migration can stop at a page boundary. */
   signal?: AbortSignal;
+  /** Structured progress callback for long-running migrations. */
+  onProgress?: (event: MigrationProgressEvent) => void;
+  /** Validate configured accountId before non-dry-run writes. */
+  checkAccount?: boolean;
 };
 
 export type UpResult = {
@@ -32,6 +38,7 @@ export async function up(opts: UpOptions): Promise<UpResult> {
   const cwd = opts.cwd ?? process.cwd();
   const cfg = await loadConfig(cwd);
   const sc = resolveStage(cfg, opts.stage);
+  if (!opts.dryRun && opts.checkAccount !== false) await assertConfiguredAccount(sc);
   const clients = createClients(sc);
   const ledger = new Ledger(clients.ledgerRaw, clients.ledgerDoc, {
     tableName: sc.ledgerTable,
@@ -107,6 +114,7 @@ export async function up(opts: UpOptions): Promise<UpResult> {
       logger: log,
       dryRun: !!opts.dryRun,
       shutdown,
+      onProgress: opts.onProgress,
     });
     const start = Date.now();
     try {

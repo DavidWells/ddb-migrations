@@ -8,6 +8,7 @@ export type {
   MigrationContext,
   MigrationModule,
   MigrationFile,
+  MigrationProgressEvent,
 } from './types.js';
 export {
   MigrationInterruptedError,
@@ -19,6 +20,16 @@ export { loadConfig, findConfig, resolveStage, resolveTableName } from './config
 export { up, type UpOptions, type UpResult } from './actions/up.js';
 export { down, type DownOptions, type DownResult } from './actions/down.js';
 export { status, type StatusItem, type StatusOptions } from './actions/status.js';
+export { plan, type PlanMigration, type PlanOptions, type PlanResult } from './actions/plan.js';
+export { doctor, type DoctorCheck, type DoctorOptions, type DoctorResult } from './actions/doctor.js';
+export {
+  showCheckpoint,
+  clearCheckpoint,
+  type CheckpointShowOptions,
+  type CheckpointShowResult,
+  type CheckpointClearOptions,
+  type CheckpointClearResult,
+} from './actions/checkpoint.js';
 export { init, type InitResult } from './actions/init.js';
 export { create } from './actions/create.js';
 export { VERSION } from './version.js';

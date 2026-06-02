@@ -8,6 +8,7 @@ import type {
   Logger,
   MigrationContext,
   MigrationModule,
+  MigrationProgressEvent,
 } from './types.js';
 import {
   createMigrationShutdownController,
@@ -55,6 +56,7 @@ export type ContextOpts = {
   dryRun: boolean;
   shutdown?: MigrationShutdownController;
   signal?: AbortSignal;
+  onProgress?: (event: MigrationProgressEvent) => void;
 };
 
 export function makeContext(opts: ContextOpts): MigrationContext {
@@ -71,6 +73,9 @@ export function makeContext(opts: ContextOpts): MigrationContext {
     signal: shutdown.signal,
     shouldStop: () => shutdown.isRequested(),
     throwIfStopped: () => shutdown.throwIfRequested(),
+    progress: (event) => {
+      opts.onProgress?.({ migrationId, ...event });
+    },
     checkpoint: async (value) => {
       if (dryRun) {
         logger.debug(`(dry-run) skipping checkpoint write: ${JSON.stringify(value)}`);

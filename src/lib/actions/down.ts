@@ -4,6 +4,9 @@ import { Ledger } from '../ledger.js';
 import { listMigrationFiles } from '../migrations.js';
 import { makeLogger } from '../logger.js';
 import { loadMigration, makeContext } from '../runner.js';
+import { assertConfiguredAccount } from '../aws-identity.js';
+import type { MigrationProgressEvent } from '../types.js';
+import { isMigrationInterruptedError } from '../shutdown.js';
 
 export type DownOptions = {
   stage: string;
@@ -12,17 +15,22 @@ export type DownOptions = {
   /** Run with ctx.dryRun=true and skip ledger writes. */
   dryRun?: boolean;
   cwd?: string;
+  signal?: AbortSignal;
+  onProgress?: (event: MigrationProgressEvent) => void;
+  checkAccount?: boolean;
 };
 
 export type DownResult = {
   rolledBack: string[];
   failed?: { id: string; message: string };
+  interrupted?: { id?: string; message: string };
 };
 
 export async function down(opts: DownOptions): Promise<DownResult> {
   const cwd = opts.cwd ?? process.cwd();
   const cfg = await loadConfig(cwd);
   const sc = resolveStage(cfg, opts.stage);
+  if (!opts.dryRun && opts.checkAccount !== false) await assertConfiguredAccount(sc);
   const clients = createClients(sc);
   const ledger = new Ledger(clients.ledgerRaw, clients.ledgerDoc, {
     tableName: sc.ledgerTable,
@@ -64,12 +72,18 @@ export async function down(opts: DownOptions): Promise<DownResult> {
       clients,
       logger: log,
       dryRun: !!opts.dryRun,
+      signal: opts.signal,
+      onProgress: opts.onProgress,
     });
     log.info(opts.dryRun ? 'rolling back (dry-run)' : 'rolling back');
     try {
       await mod.down(ctx);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      if (isMigrationInterruptedError(err)) {
+        log.warn(message);
+        return { rolledBack, interrupted: { id: e.migrationId, message } };
+      }
       log.error(`down failed: ${message}`);
       return { rolledBack, failed: { id: e.migrationId, message } };
     }

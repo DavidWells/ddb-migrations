@@ -200,6 +200,16 @@ export class Ledger {
     );
   }
 
+  async clearCheckpoint(migrationId: string): Promise<void> {
+    await this.doc.send(
+      new UpdateCommand({
+        TableName: this.tableName,
+        Key: this.key(migrationId),
+        UpdateExpression: 'REMOVE checkpoint',
+      }),
+    );
+  }
+
   async getCheckpoint<T extends Record<string, unknown> = Record<string, unknown>>(
     migrationId: string,
   ): Promise<T | undefined> {

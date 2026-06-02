@@ -74,6 +74,22 @@ export type Logger = {
   debug(msg: string): void;
 };
 
+export type MigrationProgressEvent = {
+  /** Migration id is injected by the runner when omitted by migration code. */
+  migrationId?: string;
+  /** Human-readable progress message. */
+  message?: string;
+  /** Logical or physical table currently being scanned/written. */
+  table?: string;
+  scanned?: number;
+  written?: number;
+  updated?: number;
+  deleted?: number;
+  skipped?: number;
+  checkpointed?: boolean;
+  [key: string]: unknown;
+};
+
 export type MigrationContext = {
   /** Marshaled high-level client. Use this for item-level reads/writes. */
   ddb: DynamoDBDocumentClient;
@@ -93,6 +109,8 @@ export type MigrationContext = {
   shouldStop(): boolean;
   /** Throw a MigrationInterruptedError when shutdown has been requested. */
   throwIfStopped(): void;
+  /** Emit structured progress for long-running migrations. */
+  progress(event: MigrationProgressEvent): void;
   /** Persist arbitrary state on the ledger entry so the migration can resume after a crash. */
   checkpoint(value: Record<string, unknown>): Promise<void>;
   /** Read the last checkpoint value. Returns undefined if none has been set. */

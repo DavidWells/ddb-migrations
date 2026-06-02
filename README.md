@@ -163,12 +163,67 @@ export async function down(ctx: MigrationContext): Promise<void> {
 ## CLI
 
 ```
-ddb-migrate init
-ddb-migrate create <description>
-ddb-migrate status --stage <name>
-ddb-migrate up     --stage <name> [--to <id>] [--dry-run]
-ddb-migrate down   --stage <name> [--shift N] [--dry-run]
+ddb-migrate [-C <project>] current [--json]
+ddb-migrate [-C <project>] init
+ddb-migrate [-C <project>] create <description>
+ddb-migrate [-C <project>] status --stage <name> [--json]
+ddb-migrate [-C <project>] plan   --stage <name> [--to <id>] [--json]
+ddb-migrate [-C <project>] doctor --stage <name> [--json]
+ddb-migrate [-C <project>] up     --stage <name> [--to <id>] [--dry-run] [--force] [--json]
+ddb-migrate [-C <project>] down   --stage <name> [--shift N] [--dry-run] [--force] [--json]
+ddb-migrate [-C <project>] checkpoint show  <migrationId> --stage <name> [--json]
+ddb-migrate [-C <project>] checkpoint clear <migrationId> --stage <name> --force [--json]
 ```
+
+Use `-C, --cwd` to run from outside the project directory:
+
+```bash
+ddb-migrate -C services/api doctor --stage dev
+ddb-migrate -C services/api plan --stage dev
+ddb-migrate -C services/api up --stage dev --dry-run
+ddb-migrate -C services/api up --stage dev
+```
+
+`DDB_MIGRATE_CWD` is also honored when `--cwd` is not set.
+
+### Operator workflow
+
+For a normal stage rollout:
+
+```bash
+ddb-migrate -C services/api current
+ddb-migrate -C services/api doctor --stage dev
+ddb-migrate -C services/api plan --stage dev
+ddb-migrate -C services/api up --stage dev --dry-run
+ddb-migrate -C services/api up --stage dev
+ddb-migrate -C services/api status --stage dev
+```
+
+For prod-like stages, non-dry-run `up` requires `--force`:
+
+```bash
+ddb-migrate -C services/api up --stage prod --dry-run
+ddb-migrate -C services/api up --stage prod --force
+```
+
+Rollback is destructive, so non-dry-run `down` always requires `--force`:
+
+```bash
+ddb-migrate -C services/api down --stage dev --shift 1 --dry-run
+ddb-migrate -C services/api down --stage dev --shift 1 --force
+```
+
+`plan` is intentionally different from `up --dry-run`: it does not import or
+execute migration code. It only compares migration files with the ledger and
+prints what would be selected for execution.
+
+Use `--json` on read-style commands for CI and agents. `up --json` and
+`down --json` print the final command result as JSON; progress events are only
+rendered in human output mode.
+
+Long-running migrations can call `ctx.progress(...)` to emit structured
+progress and `ctx.throwIfStopped()` at page or batch boundaries for cooperative
+Ctrl-C handling.
 
 ### Status values
 
