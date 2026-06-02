@@ -1,6 +1,6 @@
 {
   "name": "ddb-migration-tools",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "description": "Stage-aware DynamoDB migrations for TypeScript projects.",
   "type": "module",
   "bin": {
