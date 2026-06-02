@@ -12,6 +12,10 @@ export type ProgressPrinter = {
   finish(): void;
 };
 
+type ProgressTiming = {
+  startedAt: number;
+};
+
 const PRIORITY_KEYS = [
   'phase',
   'operation',
@@ -31,26 +35,35 @@ const PRIORITY_KEYS = [
 
 export function createProgressPrinter(stream: ProgressStream = process.stderr): ProgressPrinter {
   const isTty = stream.isTTY === true;
-  let activeLine = false;
+  const timings = new Map<string, ProgressTiming>();
+  let activeRows = 0;
 
   return {
     print(event) {
-      const line = formatProgressEvent(event);
-      if (line.length === 0) return;
-
       if (!isTty) {
+        const line = formatProgressEvent(event);
+        if (line.length === 0) return;
         stream.write(`${pc.gray(line)}\n`);
         return;
       }
 
       const columns = Math.max((stream.columns ?? 100) - 1, 20);
-      stream.write(`\r\u001b[2K${pc.gray(truncate(line, columns))}`);
-      activeLine = true;
+      const lines = formatTtyProgressEvent(event, timings).map((line) => truncate(line, columns));
+      if (lines.length === 0) return;
+      clearActiveRows(stream, activeRows);
+      if (isDurableTtyEvent(event)) {
+        stream.write(`${pc.gray(lines.join('\n'))}\n`);
+        activeRows = 0;
+        return;
+      }
+      stream.write(pc.gray(lines.join('\n')));
+      activeRows = lines.length;
+      if (event.done === true) this.finish();
     },
     finish() {
-      if (!isTty || !activeLine) return;
+      if (!isTty || activeRows === 0) return;
       stream.write('\n');
-      activeLine = false;
+      activeRows = 0;
     },
   };
 }
@@ -86,6 +99,49 @@ export function formatProgressEvent(event: MigrationProgressEvent): string {
   return [prefix, ...labels, ...details].join(' ');
 }
 
+export function formatTtyProgressEvent(
+  event: MigrationProgressEvent,
+  timings = new Map<string, ProgressTiming>(),
+): string[] {
+  const prefix = `[${event.migrationId ?? 'migration'}]`;
+  if (event.message) return formatTtyMessage(prefix, event.message);
+
+  const labels = [event.phase, event.operation, event.table]
+    .filter((value): value is string => typeof value === 'string' && value.length > 0);
+  const processed = progressProcessed(event);
+  const total = typeof event.total === 'number' && event.total > 0 ? event.total : undefined;
+  const remaining = progressRemaining(event, processed, total);
+  const etaSeconds = progressEtaSeconds(event, timings, processed, total, remaining);
+
+  const summary: string[] = [prefix, ...labels];
+  if (processed !== undefined && total !== undefined) {
+    summary.push(`${processed}/${total}`, formatPercent(processed, total));
+  } else if (typeof event.scanned === 'number') {
+    summary.push(`scanned=${event.scanned}`);
+  }
+  if (remaining !== undefined) summary.push(`rem=${remaining}`);
+  if (etaSeconds !== undefined) summary.push(`eta=${formatDuration(etaSeconds)}`);
+  if (event.done === true) summary.push('done=true');
+
+  const metrics: string[] = [];
+  for (const key of ['written', 'updated', 'deleted', 'skipped', 'checkpointed'] as const) {
+    const value = event[key];
+    if (value !== undefined) metrics.push(`${key}=${String(value)}`);
+  }
+
+  return metrics.length > 0 ? [summary.join(' '), `  ${metrics.join(' ')}`] : [summary.join(' ')];
+}
+
+function formatTtyMessage(prefix: string, message: string): string[] {
+  const lines = message.split('\n');
+  if (lines.length === 1) return [`${prefix} ${message}`];
+  return [`${prefix} ${lines[0]}`, ...lines.slice(1)];
+}
+
+function isDurableTtyEvent(event: MigrationProgressEvent): boolean {
+  return event.done === true || (typeof event.message === 'string' && event.message.includes('\n'));
+}
+
 function orderedKeys(event: MigrationProgressEvent): string[] {
   const seen = new Set<string>();
   const keys: string[] = [];
@@ -99,6 +155,64 @@ function orderedKeys(event: MigrationProgressEvent): string[] {
     if (!seen.has(key)) keys.push(key);
   }
   return keys;
+}
+
+function clearActiveRows(stream: ProgressStream, rows: number): void {
+  if (rows === 0) return;
+  stream.write('\r\u001b[2K');
+  for (let i = 1; i < rows; i += 1) {
+    stream.write('\u001b[1A\r\u001b[2K');
+  }
+}
+
+function progressProcessed(event: MigrationProgressEvent): number | undefined {
+  if (typeof event.applied === 'number') return event.applied;
+  if (typeof event.scanned === 'number' && typeof event.total === 'number') return event.scanned;
+  return undefined;
+}
+
+function progressRemaining(
+  event: MigrationProgressEvent,
+  processed: number | undefined,
+  total: number | undefined,
+): number | undefined {
+  if (typeof event.remaining === 'number') return event.remaining;
+  if (processed !== undefined && total !== undefined) return Math.max(total - processed, 0);
+  return undefined;
+}
+
+function progressEtaSeconds(
+  event: MigrationProgressEvent,
+  timings: Map<string, ProgressTiming>,
+  processed: number | undefined,
+  total: number | undefined,
+  remaining: number | undefined,
+): number | undefined {
+  if (typeof event.etaSeconds === 'number') return event.etaSeconds;
+  if (processed === undefined || total === undefined || remaining === undefined || processed <= 0) {
+    return undefined;
+  }
+
+  const key = progressTimingKey(event);
+  const now = Date.now();
+  const timing = timings.get(key) ?? { startedAt: now };
+  timings.set(key, timing);
+  const elapsedSeconds = Math.max((now - timing.startedAt) / 1000, 0);
+  if (elapsedSeconds <= 0) return undefined;
+  return (elapsedSeconds / processed) * remaining;
+}
+
+function progressTimingKey(event: MigrationProgressEvent): string {
+  return [
+    event.migrationId ?? 'migration',
+    event.phase ?? '',
+    event.operation ?? '',
+    event.table ?? '',
+  ].join('|');
+}
+
+function formatPercent(processed: number, total: number): string {
+  return `${((processed / total) * 100).toFixed(1)}%`;
 }
 
 function formatDuration(seconds: number): string {

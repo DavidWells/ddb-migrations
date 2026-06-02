@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { createProgressPrinter, formatProgressEvent, type ProgressStream } from '../../src/lib/progress.js';
+import {
+  createProgressPrinter,
+  formatProgressEvent,
+  formatTtyProgressEvent,
+  type ProgressStream,
+} from '../../src/lib/progress.js';
 
 function createStream(isTTY: boolean, columns = 120): ProgressStream & { output: string } {
   return {
@@ -62,7 +67,51 @@ describe('progress rendering', () => {
     printer.finish();
 
     expect(stream.output).toContain('\r\u001b[2K');
-    expect(stream.output).toContain('[m1] apply put 2/2 total=2');
+    expect(stream.output).toContain('[m1] apply put 2/2 100.0% rem=0');
     expect(stream.output.endsWith('\n')).toBe(true);
+  });
+
+  it('formats TTY apply progress as a compact two-line block', () => {
+    expect(
+      formatTtyProgressEvent({
+        migrationId: '2026-01-01_demo',
+        phase: 'apply',
+        operation: 'delete',
+        applied: 1500,
+        total: 16100,
+        remaining: 14600,
+        etaSeconds: 305,
+        written: 0,
+        updated: 0,
+        deleted: 1500,
+        skipped: 0,
+        checkpointed: false,
+      }),
+    ).toEqual([
+      '[2026-01-01_demo] apply delete 1500/16100 9.3% rem=14600 eta=5m5s',
+      '  written=0 updated=0 deleted=1500 skipped=0 checkpointed=false',
+    ]);
+  });
+
+  it('ends a TTY progress block when an event is done', () => {
+    const stream = createStream(true);
+    const printer = createProgressPrinter(stream);
+
+    printer.print({ migrationId: 'm1', phase: 'scan', table: 'system', scanned: 150, done: true });
+    stream.write('[m1] apply-plan\n');
+
+    expect(stream.output).toContain('[m1] scan system scanned=150 done=true\n[m1] apply-plan');
+  });
+
+  it('prints multiline TTY messages as durable log output', () => {
+    const stream = createStream(true);
+    const printer = createProgressPrinter(stream);
+
+    printer.print({ migrationId: 'm1', phase: 'apply', operation: 'delete', applied: 1, total: 2 });
+    printer.print({ migrationId: 'm1', message: '{\n  "phase": "apply-plan"\n}' });
+    printer.print({ migrationId: 'm1', phase: 'apply', operation: 'delete', applied: 2, total: 2 });
+
+    expect(stream.output).toContain('[m1] {\n  "phase": "apply-plan"\n}\n');
+    expect(stream.output).toContain('[m1] apply delete 2/2 100.0% rem=0');
   });
 });
