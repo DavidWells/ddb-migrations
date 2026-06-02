@@ -87,6 +87,12 @@ export type MigrationContext = {
   dryRun: boolean;
   /** Prefer this over console.log; output is prefixed with the migration id. */
   logger: Logger;
+  /** Aborted when the operator requests shutdown, e.g. first Ctrl-C in the CLI. */
+  signal: AbortSignal;
+  /** True once shutdown has been requested. Use at page/batch boundaries. */
+  shouldStop(): boolean;
+  /** Throw a MigrationInterruptedError when shutdown has been requested. */
+  throwIfStopped(): void;
   /** Persist arbitrary state on the ledger entry so the migration can resume after a crash. */
   checkpoint(value: Record<string, unknown>): Promise<void>;
   /** Read the last checkpoint value. Returns undefined if none has been set. */

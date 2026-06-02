@@ -5,6 +5,10 @@ import { Ledger } from '../ledger.js';
 import { listMigrationFiles } from '../migrations.js';
 import { makeLogger } from '../logger.js';
 import { loadMigration, makeContext } from '../runner.js';
+import {
+  createMigrationShutdownController,
+  isMigrationInterruptedError,
+} from '../shutdown.js';
 
 export type UpOptions = {
   stage: string;
@@ -13,12 +17,15 @@ export type UpOptions = {
   /** Run with ctx.dryRun=true and skip ledger writes. */
   dryRun?: boolean;
   cwd?: string;
+  /** Cooperative shutdown signal. The current migration can stop at a page boundary. */
+  signal?: AbortSignal;
 };
 
 export type UpResult = {
   applied: string[];
   skipped: string[];
   failed?: { id: string; message: string };
+  interrupted?: { id?: string; message: string };
 };
 
 export async function up(opts: UpOptions): Promise<UpResult> {
@@ -67,8 +74,20 @@ export async function up(opts: UpOptions): Promise<UpResult> {
 
   const applied: string[] = [];
   const skipped: string[] = pending.filter((p) => !slice.includes(p)).map((p) => p.id);
+  const shutdown = createMigrationShutdownController(opts.signal);
 
   for (const f of slice) {
+    if (shutdown.isRequested()) {
+      return {
+        applied,
+        skipped,
+        interrupted: {
+          id: f.id,
+          message: shutdown.reason() ?? 'Shutdown requested before migration start',
+        },
+      };
+    }
+
     const log = makeLogger(`[${f.id}]`);
     log.info(opts.dryRun ? 'starting (dry-run)' : 'starting');
     const mod = await loadMigration(f.fullPath);
@@ -87,12 +106,17 @@ export async function up(opts: UpOptions): Promise<UpResult> {
       clients,
       logger: log,
       dryRun: !!opts.dryRun,
+      shutdown,
     });
     const start = Date.now();
     try {
       await mod.up(ctx);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      if (isMigrationInterruptedError(err)) {
+        log.warn(message);
+        return { applied, skipped, interrupted: { id: f.id, message } };
+      }
       if (!opts.dryRun) await ledger.markFailed(f.id, message);
       log.error(`failed: ${message}`);
       return { applied, skipped, failed: { id: f.id, message } };
@@ -101,6 +125,16 @@ export async function up(opts: UpOptions): Promise<UpResult> {
     if (!opts.dryRun) await ledger.markComplete(f.id, dur);
     log.info(`done in ${dur}ms${opts.dryRun ? ' (dry-run)' : ''}`);
     applied.push(f.id);
+
+    if (shutdown.isRequested()) {
+      return {
+        applied,
+        skipped,
+        interrupted: {
+          message: shutdown.reason() ?? 'Shutdown requested; stopped before next migration',
+        },
+      };
+    }
   }
   return { applied, skipped };
 }

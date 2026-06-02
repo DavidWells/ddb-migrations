@@ -9,7 +9,6 @@ import {
   DeleteCommand,
   DynamoDBDocumentClient,
   GetCommand,
-  PutCommand,
   QueryCommand,
   UpdateCommand,
 } from '@aws-sdk/lib-dynamodb';
@@ -96,27 +95,59 @@ export class Ledger {
     checksum: string;
     appliedBy?: string;
   }): Promise<void> {
+    const setClauses = [
+      '#scope = :scope',
+      '#stage = :stage',
+      'migrationId = :migrationId',
+      'checksum = :checksum',
+      'appliedAt = :appliedAt',
+      '#status = :status',
+    ];
+    const removeClauses = ['errorMessage', 'durationMs', 'itemsProcessed'];
+    const values: Record<string, unknown> = {
+      ':scope': this.options.scope,
+      ':stage': this.options.stage,
+      ':migrationId': entry.migrationId,
+      ':checksum': entry.checksum,
+      ':appliedAt': new Date().toISOString(),
+      ':status': 'in_progress' satisfies LedgerEntry['status'],
+      ':completed': 'completed' satisfies LedgerEntry['status'],
+    };
+
+    if (entry.appliedBy !== undefined) {
+      setClauses.push('appliedBy = :appliedBy');
+      values[':appliedBy'] = entry.appliedBy;
+    } else {
+      removeClauses.push('appliedBy');
+    }
+    if (this.options.accountId !== undefined) {
+      setClauses.push('accountId = :accountId');
+      values[':accountId'] = this.options.accountId;
+    } else {
+      removeClauses.push('accountId');
+    }
+    if (this.options.region !== undefined) {
+      setClauses.push('#region = :region');
+      values[':region'] = this.options.region;
+    } else {
+      removeClauses.push('#region');
+    }
+
     await this.doc.send(
-      new PutCommand({
+      new UpdateCommand({
         TableName: this.tableName,
-        Item: {
-          pk: this.pk,
-          sk: ledgerSk(entry.migrationId),
-          scope: this.options.scope,
-          stage: this.options.stage,
-          migrationId: entry.migrationId,
-          checksum: entry.checksum,
-          appliedAt: new Date().toISOString(),
-          status: 'in_progress' satisfies LedgerEntry['status'],
-          appliedBy: entry.appliedBy,
-          accountId: this.options.accountId,
-          region: this.options.region,
-        },
+        Key: this.key(entry.migrationId),
+        UpdateExpression: `SET ${setClauses.join(', ')} REMOVE ${removeClauses.join(', ')}`,
         // Allow overwrite if previous run was failed/in_progress; refuse if already completed.
         ConditionExpression:
           '(attribute_not_exists(pk) AND attribute_not_exists(sk)) OR #status <> :completed',
-        ExpressionAttributeNames: { '#status': 'status' },
-        ExpressionAttributeValues: { ':completed': 'completed' },
+        ExpressionAttributeNames: {
+          '#scope': 'scope',
+          '#stage': 'stage',
+          '#status': 'status',
+          '#region': 'region',
+        },
+        ExpressionAttributeValues: values,
       }),
     );
   }

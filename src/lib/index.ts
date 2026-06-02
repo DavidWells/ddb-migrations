@@ -9,6 +9,12 @@ export type {
   MigrationModule,
   MigrationFile,
 } from './types.js';
+export {
+  MigrationInterruptedError,
+  createMigrationShutdownController,
+  isMigrationInterruptedError,
+  type MigrationShutdownController,
+} from './shutdown.js';
 export { loadConfig, findConfig, resolveStage, resolveTableName } from './config.js';
 export { up, type UpOptions, type UpResult } from './actions/up.js';
 export { down, type DownOptions, type DownResult } from './actions/down.js';

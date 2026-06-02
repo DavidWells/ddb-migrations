@@ -1,6 +1,6 @@
 {
   "name": "ddb-migration-tools",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Stage-aware DynamoDB migrations for TypeScript projects.",
   "type": "module",
   "bin": {
@@ -60,6 +60,7 @@
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.700.0",
     "@aws-sdk/lib-dynamodb": "^3.700.0",
+    "@davidwells/graceful-exit": "^0.0.2",
     "cli-table3": "^0.6.5",
     "commander": "^12.1.0",
     "picocolors": "^1.1.1",

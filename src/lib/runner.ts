@@ -9,6 +9,10 @@ import type {
   MigrationContext,
   MigrationModule,
 } from './types.js';
+import {
+  createMigrationShutdownController,
+  type MigrationShutdownController,
+} from './shutdown.js';
 
 /**
  * Register tsx's ESM loader so `await import('foo.ts')` works in-process.
@@ -49,10 +53,14 @@ export type ContextOpts = {
   clients: Clients;
   logger: Logger;
   dryRun: boolean;
+  shutdown?: MigrationShutdownController;
+  signal?: AbortSignal;
 };
 
 export function makeContext(opts: ContextOpts): MigrationContext {
   const { cfg, stage, migrationId, ledger, clients, logger, dryRun } = opts;
+  const shutdown =
+    opts.shutdown ?? createMigrationShutdownController(opts.signal);
   return {
     ddb: clients.doc,
     ddbRaw: clients.raw,
@@ -60,6 +68,9 @@ export function makeContext(opts: ContextOpts): MigrationContext {
     stage,
     dryRun,
     logger,
+    signal: shutdown.signal,
+    shouldStop: () => shutdown.isRequested(),
+    throwIfStopped: () => shutdown.throwIfRequested(),
     checkpoint: async (value) => {
       if (dryRun) {
         logger.debug(`(dry-run) skipping checkpoint write: ${JSON.stringify(value)}`);

@@ -154,6 +154,9 @@ export async function down(ctx: MigrationContext): Promise<void> {
 | `stage` | The stage name. |
 | `dryRun` | `true` when running with `--dry-run`. Migrations should branch on this. |
 | `logger` | Prefixed logger; prefer this over `console.log`. |
+| `signal` | Aborted when the operator requests shutdown, such as the first Ctrl-C in the CLI. |
+| `shouldStop()` | Returns `true` once shutdown has been requested. Check this at page/batch boundaries. |
+| `throwIfStopped()` | Throws `MigrationInterruptedError` when shutdown has been requested, leaving the ledger row `in_progress` for a later resume. |
 | `checkpoint(value)` | Persist arbitrary JSON state on the ledger row for resume after a crash. |
 | `getCheckpoint()` | Read the last checkpoint value. |
 
