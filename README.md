@@ -157,6 +157,7 @@ export async function down(ctx: MigrationContext): Promise<void> {
 | `signal` | Aborted when the operator requests shutdown, such as the first Ctrl-C in the CLI. |
 | `shouldStop()` | Returns `true` once shutdown has been requested. Check this at page/batch boundaries. |
 | `throwIfStopped()` | Throws `MigrationInterruptedError` when shutdown has been requested, leaving the ledger row `in_progress` for a later resume. |
+| `sdkStats` | Per-migration DynamoDB app-client `send()` stats. Use `snapshot()` or `reset()` for custom progress/reporting. |
 | `checkpoint(value)` | Persist arbitrary JSON state on the ledger row for resume after a crash. |
 | `getCheckpoint()` | Read the last checkpoint value. |
 
@@ -169,8 +170,8 @@ ddb-migrate [-C <project>] create <description>
 ddb-migrate [-C <project>] status --stage <name> [--json]
 ddb-migrate [-C <project>] plan   --stage <name> [--to <id>] [--json]
 ddb-migrate [-C <project>] doctor --stage <name> [--json]
-ddb-migrate [-C <project>] up     --stage <name> [--to <id>] [--dry-run] [--force] [--json]
-ddb-migrate [-C <project>] down   --stage <name> [--shift N] [--dry-run] [--force] [--json]
+ddb-migrate [-C <project>] up     --stage <name> [--to <id>] [--dry-run] [--force] [--capacity] [--no-sdk-stats] [--json]
+ddb-migrate [-C <project>] down   --stage <name> [--shift N] [--dry-run] [--force] [--capacity] [--no-sdk-stats] [--json]
 ddb-migrate [-C <project>] checkpoint show  <migrationId> --stage <name> [--json]
 ddb-migrate [-C <project>] checkpoint clear <migrationId> --stage <name> --force [--json]
 ```
@@ -224,6 +225,48 @@ rendered in human output mode.
 Long-running migrations can call `ctx.progress(...)` to emit structured
 progress and `ctx.throwIfStopped()` at page or batch boundaries for cooperative
 Ctrl-C handling.
+
+### SDK call stats
+
+Migration app-table clients are wrapped by default so progress output can show DynamoDB SDK activity alongside migration business counters:
+
+```txt
+[2026-06-02_cleanup] apply delete 5400/11375 47.5% rem=5975 eta=9m3s
+  sdk calls=5693 reads=293 writes=5400 pages=293 items=29187
+  written=0 updated=0 deleted=5400 skipped=0
+```
+
+These are top-level `ctx.ddb.send()` / `ctx.ddbRaw.send()` calls observed by the wrapper. They are not AWS SDK internal retry attempts and do not include ledger/checkpoint writes.
+
+Use `--no-sdk-stats` to disable SDK stats collection for a CLI run:
+
+```bash
+ddb-migrate up --stage dev --no-sdk-stats
+```
+
+Use `--capacity` to request `ReturnConsumedCapacity=TOTAL` on supported app-table commands and render total consumed capacity as `cu`:
+
+```bash
+ddb-migrate up --stage dev --capacity
+```
+
+Projects can set defaults in config:
+
+```json
+{
+  "observability": {
+    "sdkStatsEnabled": true,
+    "captureConsumedCapacity": false
+  }
+}
+```
+
+Migration code can also inspect or reset stats directly:
+
+```ts
+ctx.progress({ phase: 'apply', sdk: ctx.sdkStats.snapshot() });
+ctx.sdkStats.reset();
+```
 
 ### Status values
 

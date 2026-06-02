@@ -1,5 +1,6 @@
 import type { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import type { DdbSdkStats, DdbSdkStatsSnapshot } from './sdk-stats.js';
 
 export type StageConfig = {
   region: string;
@@ -36,6 +37,12 @@ export type Config = {
   appName: string;
   migrationsDir: string;
   ledger?: LedgerConfig;
+  observability?: {
+    /** Wrap migration app clients and collect SDK send() stats. Defaults to true. */
+    sdkStatsEnabled?: boolean;
+    /** Request ReturnConsumedCapacity=TOTAL on supported migration app commands. Defaults to false. */
+    captureConsumedCapacity?: boolean;
+  };
   stages: Record<string, StageConfig>;
 };
 
@@ -95,6 +102,7 @@ export type MigrationProgressEvent = {
   total?: number;
   remaining?: number;
   etaSeconds?: number;
+  sdk?: DdbSdkStatsSnapshot;
   [key: string]: unknown;
 };
 
@@ -119,6 +127,8 @@ export type MigrationContext = {
   throwIfStopped(): void;
   /** Emit structured progress for long-running migrations. */
   progress(event: MigrationProgressEvent): void;
+  /** Per-migration DynamoDB SDK send() stats for app-table clients. */
+  sdkStats: DdbSdkStats;
   /** Persist arbitrary state on the ledger entry so the migration can resume after a crash. */
   checkpoint(value: Record<string, unknown>): Promise<void>;
   /** Read the last checkpoint value. Returns undefined if none has been set. */

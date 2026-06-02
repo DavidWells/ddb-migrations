@@ -153,9 +153,18 @@ program
   .option('--to <id>', 'Apply migrations only up to and including this id.')
   .option('--dry-run', "Don't write to the ledger; pass dryRun=true to migrations.", false)
   .option('--force', 'Bypass prod-stage non-dry-run safety guard.', false)
+  .option('--capacity', 'Request ReturnConsumedCapacity=TOTAL on supported migration app-table commands.', false)
+  .option('--no-sdk-stats', 'Disable SDK call stats for this run.')
   .option('--json', 'Print JSON output.', false)
   .description('Apply pending migrations.')
-  .action(async (opts: { stage: string; to?: string; dryRun: boolean; force: boolean } & JsonOption) => {
+  .action(async (opts: {
+    stage: string;
+    to?: string;
+    dryRun: boolean;
+    force: boolean;
+    capacity: boolean;
+    sdkStats: boolean;
+  } & JsonOption) => {
     requireForceForUp(opts.stage, opts.dryRun, opts.force);
     const progress = createProgressPrinter();
     const cwd = resolveCwd();
@@ -164,6 +173,8 @@ program
       cwd,
       to: opts.to,
       dryRun: opts.dryRun,
+      sdkStatsEnabled: opts.sdkStats,
+      captureConsumedCapacity: opts.capacity,
       signal: shutdown.signal,
       onProgress: opts.json ? undefined : progress.print,
       onActiveMigration: opts.dryRun
@@ -197,9 +208,18 @@ program
   )
   .option('--dry-run', "Don't write to the ledger; pass dryRun=true to migrations.", false)
   .option('--force', 'Required for non-dry-run rollback.', false)
+  .option('--capacity', 'Request ReturnConsumedCapacity=TOTAL on supported migration app-table commands.', false)
+  .option('--no-sdk-stats', 'Disable SDK call stats for this run.')
   .option('--json', 'Print JSON output.', false)
   .description('Roll back the last N completed migrations.')
-  .action(async (opts: { stage: string; shift: number; dryRun: boolean; force: boolean } & JsonOption) => {
+  .action(async (opts: {
+    stage: string;
+    shift: number;
+    dryRun: boolean;
+    force: boolean;
+    capacity: boolean;
+    sdkStats: boolean;
+  } & JsonOption) => {
     requireForceForDown(opts.dryRun, opts.force);
     const progress = createProgressPrinter();
     const promise = down({
@@ -207,6 +227,8 @@ program
       cwd: resolveCwd(),
       shift: opts.shift,
       dryRun: opts.dryRun,
+      sdkStatsEnabled: opts.sdkStats,
+      captureConsumedCapacity: opts.capacity,
       signal: shutdown.signal,
       onProgress: opts.json ? undefined : progress.print,
     });

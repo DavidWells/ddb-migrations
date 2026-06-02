@@ -80,6 +80,8 @@ export async function up(ctx: MigrationContext): Promise<void> {
 
 Use `ctx.ddb` for item operations and `ctx.ddbRaw` for table-level operations such as GSI changes. Resolve all table names through `ctx.tableName(logical)`.
 
+For long migrations, `ctx.sdkStats.snapshot()` reports observed app-table DynamoDB `send()` calls, reads/writes, pages, returned items, failures, throttles, and optional consumed capacity. These are top-level SDK calls, not internal retry attempts, and do not include ledger/checkpoint writes.
+
 Honor dry-run explicitly:
 
 ```ts
@@ -120,6 +122,13 @@ Apply:
 ```bash
 npx ddb-migrate up --stage staging
 npx ddb-migrate status --stage staging
+```
+
+Use SDK observability flags when diagnosing long backfills:
+
+```bash
+npx ddb-migrate up --stage staging --capacity      # request consumed capacity in responses
+npx ddb-migrate up --stage staging --no-sdk-stats  # disable SDK stats for this run
 ```
 
 Rollback only when `down()` is intentionally implemented and safe:

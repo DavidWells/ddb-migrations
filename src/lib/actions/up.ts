@@ -11,6 +11,7 @@ import {
 } from '../shutdown.js';
 import { assertConfiguredAccount } from '../aws-identity.js';
 import type { MigrationProgressEvent } from '../types.js';
+import type { DdbSdkStatsSnapshot } from '../sdk-stats.js';
 
 export type UpOptions = {
   stage: string;
@@ -27,11 +28,16 @@ export type UpOptions = {
   onActiveMigration?: (migrationId: string | undefined) => void;
   /** Validate configured accountId before non-dry-run writes. */
   checkAccount?: boolean;
+  /** Wrap migration app clients and collect SDK send() stats. Defaults to config or true. */
+  sdkStatsEnabled?: boolean;
+  /** Request ReturnConsumedCapacity=TOTAL on supported migration app commands. Defaults to config or false. */
+  captureConsumedCapacity?: boolean;
 };
 
 export type UpResult = {
   applied: string[];
   skipped: string[];
+  sdkStats?: { byMigration: Record<string, DdbSdkStatsSnapshot> };
   failed?: { id: string; message: string };
   interrupted?: { id?: string; message: string };
 };
@@ -83,6 +89,13 @@ export async function up(opts: UpOptions): Promise<UpResult> {
 
   const applied: string[] = [];
   const skipped: string[] = pending.filter((p) => !slice.includes(p)).map((p) => p.id);
+  const sdkStatsEnabled = opts.sdkStatsEnabled ?? cfg.observability?.sdkStatsEnabled ?? true;
+  const sdkStatsByMigration: Record<string, DdbSdkStatsSnapshot> = {};
+  const resultBase = (): Pick<UpResult, 'applied' | 'skipped' | 'sdkStats'> => ({
+    applied,
+    skipped,
+    ...(sdkStatsEnabled ? { sdkStats: { byMigration: sdkStatsByMigration } } : {}),
+  });
   const shutdown = createMigrationShutdownController(opts.signal);
   let activeMigrationId: string | undefined;
   let interruptMarkedFor: string | undefined;
@@ -105,8 +118,7 @@ export async function up(opts: UpOptions): Promise<UpResult> {
     if (shutdown.isRequested()) {
       await markActiveInterrupted(shutdown.reason() ?? 'Shutdown requested before migration start');
       return {
-        applied,
-        skipped,
+        ...resultBase(),
         interrupted: {
           id: f.id,
           message: shutdown.reason() ?? 'Shutdown requested before migration start',
@@ -138,27 +150,31 @@ export async function up(opts: UpOptions): Promise<UpResult> {
       dryRun: !!opts.dryRun,
       shutdown,
       onProgress: opts.onProgress,
+      sdkStatsEnabled: opts.sdkStatsEnabled,
+      captureConsumedCapacity: opts.captureConsumedCapacity,
     });
     const start = Date.now();
     try {
       await mod.up(ctx);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      if (sdkStatsEnabled) sdkStatsByMigration[f.id] = ctx.sdkStats.snapshot();
       if (isMigrationInterruptedError(err)) {
         await markActiveInterrupted(message);
         log.warn(message);
-        return { applied, skipped, interrupted: { id: f.id, message } };
+        return { ...resultBase(), interrupted: { id: f.id, message } };
       }
       if (!opts.dryRun) await ledger.markFailed(f.id, message);
       log.error(`failed: ${message}`);
-      return { applied, skipped, failed: { id: f.id, message } };
+      return { ...resultBase(), failed: { id: f.id, message } };
     }
     const dur = Date.now() - start;
+    if (sdkStatsEnabled) sdkStatsByMigration[f.id] = ctx.sdkStats.snapshot();
     if (shutdown.isRequested()) {
       const message = shutdown.reason() ?? 'Shutdown requested after migration returned';
       await markActiveInterrupted(message);
       log.warn(message);
-      return { applied, skipped, interrupted: { id: f.id, message } };
+      return { ...resultBase(), interrupted: { id: f.id, message } };
     }
     if (!opts.dryRun) await ledger.markComplete(f.id, dur);
     log.info(`done in ${dur}ms${opts.dryRun ? ' (dry-run)' : ''}`);
@@ -169,13 +185,12 @@ export async function up(opts: UpOptions): Promise<UpResult> {
     if (shutdown.isRequested()) {
       await markActiveInterrupted(shutdown.reason() ?? 'Shutdown requested; stopped before next migration');
       return {
-        applied,
-        skipped,
+        ...resultBase(),
         interrupted: {
           message: shutdown.reason() ?? 'Shutdown requested; stopped before next migration',
         },
       };
     }
   }
-  return { applied, skipped };
+  return resultBase();
 }

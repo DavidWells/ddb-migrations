@@ -127,6 +127,7 @@ function applyEvent(
   etaSeconds: number,
   done: boolean,
 ): MigrationProgressEvent {
+  const scanPages = 120;
   return {
     migrationId,
     phase: 'apply',
@@ -140,6 +141,40 @@ function applyEvent(
     remaining,
     etaSeconds,
     checkpointed: done,
+    sdk: {
+      calls: scanPages + applied,
+      reads: scanPages,
+      writes: applied,
+      controls: 0,
+      unknown: 0,
+      succeeded: scanPages + applied,
+      failed: 0,
+      throttles: 0,
+      pages: scanPages,
+      itemsReturned: 12000,
+      consumedCapacity: 0,
+      lastEvaluatedKeyCount: Math.max(scanPages - 1, 0),
+      commands: {
+        ScanCommand: { attempted: scanPages, succeeded: scanPages, failed: 0 },
+        DeleteCommand: { attempted: applied, succeeded: applied, failed: 0 },
+      },
+      bySource: {
+        app: {
+          calls: scanPages + applied,
+          reads: scanPages,
+          writes: applied,
+          controls: 0,
+          unknown: 0,
+          succeeded: scanPages + applied,
+          failed: 0,
+          pages: scanPages,
+          itemsReturned: 12000,
+          consumedCapacity: 0,
+          lastEvaluatedKeyCount: Math.max(scanPages - 1, 0),
+        },
+      },
+      errorsByName: {},
+    },
     ...(done ? { done: true } : {}),
   };
 }

@@ -10,6 +10,7 @@ import type {
   MigrationModule,
   MigrationProgressEvent,
 } from './types.js';
+import { createDdbSdkStats, wrapCountingDdbClient } from './sdk-stats.js';
 import {
   createMigrationShutdownController,
   type MigrationShutdownController,
@@ -57,15 +58,35 @@ export type ContextOpts = {
   shutdown?: MigrationShutdownController;
   signal?: AbortSignal;
   onProgress?: (event: MigrationProgressEvent) => void;
+  sdkStatsEnabled?: boolean;
+  captureConsumedCapacity?: boolean;
 };
 
 export function makeContext(opts: ContextOpts): MigrationContext {
   const { cfg, stage, migrationId, ledger, clients, logger, dryRun } = opts;
   const shutdown =
     opts.shutdown ?? createMigrationShutdownController(opts.signal);
+  const sdkStats = createDdbSdkStats();
+  const sdkStatsEnabled = opts.sdkStatsEnabled ?? cfg.observability?.sdkStatsEnabled ?? true;
+  const captureConsumedCapacity =
+    opts.captureConsumedCapacity ?? cfg.observability?.captureConsumedCapacity ?? false;
+  const ddb = sdkStatsEnabled
+    ? wrapCountingDdbClient(clients.doc, {
+      stats: sdkStats,
+      source: 'app',
+      captureConsumedCapacity,
+    })
+    : clients.doc;
+  const ddbRaw = sdkStatsEnabled
+    ? wrapCountingDdbClient(clients.raw, {
+      stats: sdkStats,
+      source: 'appRaw',
+      captureConsumedCapacity,
+    })
+    : clients.raw;
   return {
-    ddb: clients.doc,
-    ddbRaw: clients.raw,
+    ddb,
+    ddbRaw,
     tableName: (logical) => resolveTableName(cfg, stage, logical),
     stage,
     dryRun,
@@ -74,8 +95,12 @@ export function makeContext(opts: ContextOpts): MigrationContext {
     shouldStop: () => shutdown.isRequested(),
     throwIfStopped: () => shutdown.throwIfRequested(),
     progress: (event) => {
-      opts.onProgress?.({ migrationId, ...event });
+      const enriched = sdkStatsEnabled
+        ? { migrationId, sdk: sdkStats.snapshot(), ...event }
+        : { migrationId, ...event };
+      opts.onProgress?.(enriched);
     },
+    sdkStats,
     checkpoint: async (value) => {
       if (dryRun) {
         logger.debug(`(dry-run) skipping checkpoint write: ${JSON.stringify(value)}`);

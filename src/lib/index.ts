@@ -38,3 +38,17 @@ export {
 export { init, type InitResult } from './actions/init.js';
 export { create } from './actions/create.js';
 export { VERSION } from './version.js';
+export {
+  createDdbSdkStats,
+  wrapCountingDdbClient,
+  classifyDdbCommand,
+  capacityUnits,
+  countItems,
+  type DdbCommandClass,
+  type DdbClientSource,
+  type DdbCommandStats,
+  type DdbSdkSourceStats,
+  type DdbSdkStats,
+  type DdbSdkStatsController,
+  type DdbSdkStatsSnapshot,
+} from './sdk-stats.js';

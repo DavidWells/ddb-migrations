@@ -66,4 +66,16 @@ describe('ddb-migrate CLI', () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toMatch(/requires --force/);
   });
+
+  it('documents SDK stats and capacity flags on up/down', () => {
+    const upHelp = runCli(['up', '--help']);
+    const downHelp = runCli(['down', '--help']);
+
+    expect(upHelp.status).toBe(0);
+    expect(upHelp.stdout).toContain('--capacity');
+    expect(upHelp.stdout).toContain('--no-sdk-stats');
+    expect(downHelp.status).toBe(0);
+    expect(downHelp.stdout).toContain('--capacity');
+    expect(downHelp.stdout).toContain('--no-sdk-stats');
+  });
 });

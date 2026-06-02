@@ -7,6 +7,7 @@ import { loadMigration, makeContext } from '../runner.js';
 import { assertConfiguredAccount } from '../aws-identity.js';
 import type { MigrationProgressEvent } from '../types.js';
 import { isMigrationInterruptedError } from '../shutdown.js';
+import type { DdbSdkStatsSnapshot } from '../sdk-stats.js';
 
 export type DownOptions = {
   stage: string;
@@ -18,10 +19,15 @@ export type DownOptions = {
   signal?: AbortSignal;
   onProgress?: (event: MigrationProgressEvent) => void;
   checkAccount?: boolean;
+  /** Wrap migration app clients and collect SDK send() stats. Defaults to config or true. */
+  sdkStatsEnabled?: boolean;
+  /** Request ReturnConsumedCapacity=TOTAL on supported migration app commands. Defaults to config or false. */
+  captureConsumedCapacity?: boolean;
 };
 
 export type DownResult = {
   rolledBack: string[];
+  sdkStats?: { byMigration: Record<string, DdbSdkStatsSnapshot> };
   failed?: { id: string; message: string };
   interrupted?: { id?: string; message: string };
 };
@@ -50,19 +56,25 @@ export async function down(opts: DownOptions): Promise<DownResult> {
   const ordered = target.reverse();
 
   const rolledBack: string[] = [];
+  const sdkStatsEnabled = opts.sdkStatsEnabled ?? cfg.observability?.sdkStatsEnabled ?? true;
+  const sdkStatsByMigration: Record<string, DdbSdkStatsSnapshot> = {};
+  const resultBase = (): Pick<DownResult, 'rolledBack' | 'sdkStats'> => ({
+    rolledBack,
+    ...(sdkStatsEnabled ? { sdkStats: { byMigration: sdkStatsByMigration } } : {}),
+  });
   for (const e of ordered) {
     const log = makeLogger(`[${e.migrationId}]`);
     const file = filesById.get(e.migrationId);
     if (!file) {
       const message = 'cannot roll back: migration file not found in migrationsDir';
       log.error(message);
-      return { rolledBack, failed: { id: e.migrationId, message } };
+      return { ...resultBase(), failed: { id: e.migrationId, message } };
     }
     const mod = await loadMigration(file.fullPath);
     if (!mod.down) {
       const message = "cannot roll back: migration has no exported 'down' function";
       log.error(message);
-      return { rolledBack, failed: { id: e.migrationId, message } };
+      return { ...resultBase(), failed: { id: e.migrationId, message } };
     }
     const ctx = makeContext({
       cfg,
@@ -74,21 +86,25 @@ export async function down(opts: DownOptions): Promise<DownResult> {
       dryRun: !!opts.dryRun,
       signal: opts.signal,
       onProgress: opts.onProgress,
+      sdkStatsEnabled: opts.sdkStatsEnabled,
+      captureConsumedCapacity: opts.captureConsumedCapacity,
     });
     log.info(opts.dryRun ? 'rolling back (dry-run)' : 'rolling back');
     try {
       await mod.down(ctx);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      if (sdkStatsEnabled) sdkStatsByMigration[e.migrationId] = ctx.sdkStats.snapshot();
       if (isMigrationInterruptedError(err)) {
         log.warn(message);
-        return { rolledBack, interrupted: { id: e.migrationId, message } };
+        return { ...resultBase(), interrupted: { id: e.migrationId, message } };
       }
       log.error(`down failed: ${message}`);
-      return { rolledBack, failed: { id: e.migrationId, message } };
+      return { ...resultBase(), failed: { id: e.migrationId, message } };
     }
+    if (sdkStatsEnabled) sdkStatsByMigration[e.migrationId] = ctx.sdkStats.snapshot();
     if (!opts.dryRun) await ledger.remove(e.migrationId);
     rolledBack.push(e.migrationId);
   }
-  return { rolledBack };
+  return resultBase();
 }

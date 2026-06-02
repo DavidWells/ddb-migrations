@@ -1,5 +1,6 @@
 import pc from 'picocolors';
 import type { MigrationProgressEvent } from './types.js';
+import type { DdbSdkStatsSnapshot } from './sdk-stats.js';
 
 export type ProgressStream = {
   isTTY?: boolean;
@@ -29,6 +30,7 @@ const PRIORITY_KEYS = [
   'total',
   'remaining',
   'etaSeconds',
+  'sdk',
   'done',
   'checkpointed',
 ] as const;
@@ -81,9 +83,18 @@ export function formatProgressEvent(event: MigrationProgressEvent): string {
   if (typeof event.applied === 'number' && typeof event.total === 'number') {
     details.push(`${event.applied}/${event.total}`);
   }
+  const sdk = sdkStats(event.sdk);
+  if (sdk) details.push(...formatSdkDetails(sdk, 'sdk.'));
 
   for (const key of orderedKeys(event)) {
-    if (key === 'migrationId' || key === 'message' || key === 'phase' || key === 'operation' || key === 'table') {
+    if (
+      key === 'migrationId' ||
+      key === 'message' ||
+      key === 'phase' ||
+      key === 'operation' ||
+      key === 'table' ||
+      key === 'sdk'
+    ) {
       continue;
     }
     if (key === 'applied' && typeof event.total === 'number') continue;
@@ -129,7 +140,12 @@ export function formatTtyProgressEvent(
     if (value !== undefined) metrics.push(`${key}=${String(value)}`);
   }
 
-  return metrics.length > 0 ? [summary.join(' '), `  ${metrics.join(' ')}`] : [summary.join(' ')];
+  const sdk = sdkStats(event.sdk);
+  const sdkLine = sdk ? [`  sdk ${formatSdkDetails(sdk).join(' ')}`] : [];
+
+  return metrics.length > 0
+    ? [summary.join(' '), ...sdkLine, `  ${metrics.join(' ')}`]
+    : [summary.join(' '), ...sdkLine];
 }
 
 function formatTtyMessage(prefix: string, message: string): string[] {
@@ -215,6 +231,35 @@ function formatPercent(processed: number, total: number): string {
   return `${((processed / total) * 100).toFixed(1)}%`;
 }
 
+function sdkStats(value: unknown): DdbSdkStatsSnapshot | undefined {
+  if (!isRecord(value)) return undefined;
+  return typeof value.calls === 'number' &&
+    typeof value.reads === 'number' &&
+    typeof value.writes === 'number' &&
+    typeof value.pages === 'number' &&
+    typeof value.itemsReturned === 'number'
+    ? value as DdbSdkStatsSnapshot
+    : undefined;
+}
+
+function formatSdkDetails(stats: DdbSdkStatsSnapshot, prefix = ''): string[] {
+  const details = [
+    `${prefix}calls=${stats.calls}`,
+    `${prefix}reads=${stats.reads}`,
+    `${prefix}writes=${stats.writes}`,
+    `${prefix}pages=${stats.pages}`,
+    `${prefix}items=${stats.itemsReturned}`,
+  ];
+  if (stats.consumedCapacity > 0) details.push(`${prefix}cu=${round(stats.consumedCapacity)}`);
+  if (stats.failed > 0) details.push(`${prefix}errors=${stats.failed}`);
+  if (stats.throttles > 0) details.push(`${prefix}throttles=${stats.throttles}`);
+  return details;
+}
+
+function round(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+}
+
 function formatDuration(seconds: number): string {
   const whole = Math.max(0, Math.ceil(seconds));
   if (whole < 60) return `${whole}s`;
@@ -230,4 +275,8 @@ function truncate(value: string, columns: number): string {
   if (value.length <= columns) return value;
   if (columns <= 1) return value.slice(0, columns);
   return `${value.slice(0, columns - 1)}…`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }

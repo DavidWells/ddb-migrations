@@ -93,6 +93,76 @@ describe('progress rendering', () => {
     ]);
   });
 
+  it('formats TTY progress with compact SDK stats on a separate line', () => {
+    expect(
+      formatTtyProgressEvent({
+        migrationId: '2026-01-01_demo',
+        phase: 'apply',
+        operation: 'delete',
+        applied: 1500,
+        total: 16100,
+        remaining: 14600,
+        etaSeconds: 305,
+        written: 0,
+        updated: 0,
+        deleted: 1500,
+        skipped: 0,
+        sdk: {
+          calls: 1620,
+          reads: 120,
+          writes: 1500,
+          controls: 0,
+          unknown: 0,
+          succeeded: 1620,
+          failed: 0,
+          throttles: 0,
+          pages: 120,
+          itemsReturned: 12000,
+          consumedCapacity: 0,
+          lastEvaluatedKeyCount: 119,
+          commands: {},
+          bySource: {},
+          errorsByName: {},
+        },
+      }),
+    ).toEqual([
+      '[2026-01-01_demo] apply delete 1500/16100 9.3% rem=14600 eta=5m5s',
+      '  sdk calls=1620 reads=120 writes=1500 pages=120 items=12000',
+      '  written=0 updated=0 deleted=1500 skipped=0',
+    ]);
+  });
+
+  it('formats non-TTY progress with compact SDK fields', () => {
+    expect(
+      formatProgressEvent({
+        migrationId: '2026-01-01_demo',
+        phase: 'apply',
+        operation: 'delete',
+        applied: 1,
+        total: 2,
+        sdk: {
+          calls: 3,
+          reads: 1,
+          writes: 2,
+          controls: 0,
+          unknown: 0,
+          succeeded: 2,
+          failed: 1,
+          throttles: 1,
+          pages: 2,
+          itemsReturned: 10,
+          consumedCapacity: 2.5,
+          lastEvaluatedKeyCount: 1,
+          commands: { DeleteCommand: { attempted: 2, succeeded: 1, failed: 1 } },
+          bySource: {},
+          errorsByName: { ThrottlingException: 1 },
+        },
+      }),
+    ).toBe(
+      '[2026-01-01_demo] apply delete 1/2 sdk.calls=3 sdk.reads=1 sdk.writes=2 sdk.pages=2 sdk.items=10 sdk.cu=2.5 sdk.errors=1 sdk.throttles=1 total=2',
+    );
+  });
+
   it('ends a TTY progress block when an event is done', () => {
     const stream = createStream(true);
     const printer = createProgressPrinter(stream);

@@ -27,6 +27,7 @@
     "build": "tsc && chmod +x dist/bin/cli.js",
     "dev": "tsc --watch",
     "typecheck": "tsc --noEmit",
+    "types": "tsc --noEmit",
     "test": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
     "test:all": "vitest run",
