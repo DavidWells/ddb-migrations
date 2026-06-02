@@ -33,6 +33,7 @@
     "ddb:up": "docker compose up -d",
     "ddb:down": "docker compose down -v",
     "prepublishOnly": "npm run build",
+    "version": "node scripts/sync-version.mjs && git add src/lib/version.ts",
     "release:push": "git push origin && git push origin --tags",
     "release:patch": "npm version patch && npm publish && npm run release:push",
     "release:minor": "npm version minor && npm publish && npm run release:push",
