@@ -310,6 +310,28 @@ Files and migration directories in `migrations/` are sorted lexicographically by
 
 The shape (timestamped files, ledger table, `up` / `down` / `status` CLI) is intentionally similar — that part of the design is well-trodden.
 
+## Contributor Utilities
+
+### Preview TTY progress output
+
+Use the render harness to inspect the migration progress display without touching DynamoDB:
+
+```bash
+npx tsx tests/render-progress/index.ts
+```
+
+The optional arguments are:
+
+```bash
+npx tsx tests/render-progress/index.ts <columns> <delayMs> <stepSize> <total>
+```
+
+For example, this previews an 88-column terminal with fast frames and a smaller fake delete plan:
+
+```bash
+npx tsx tests/render-progress/index.ts 88 80 1000 5000
+```
+
 ## License
 
 MIT
