@@ -65,15 +65,16 @@ describe('plan', () => {
     expect(result.migrations.find((migration) => migration.id === '2026-01-03_third')?.willRun).toBe(false);
   });
 
-  it('marks failed and in-progress ledger rows as blocked', async () => {
+  it('marks failed, in-progress, and interrupted ledger rows as blocked', async () => {
     const cwd = makeProject();
     vi.spyOn(Ledger.prototype, 'listAll').mockResolvedValue([
       entry('2026-01-01_first', { status: 'failed' }),
       entry('2026-01-02_second', { status: 'in_progress' }),
+      entry('2026-01-03_third', { status: 'interrupted' }),
     ]);
 
     const result = await plan({ cwd, stage: 'dev' });
 
-    expect(result.blocked).toEqual(['2026-01-01_first', '2026-01-02_second']);
+    expect(result.blocked).toEqual(['2026-01-01_first', '2026-01-02_second', '2026-01-03_third']);
   });
 });

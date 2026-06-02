@@ -1,9 +1,9 @@
 #!/usr/bin/env node
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { Command, Option } from 'commander';
 import Table from 'cli-table3';
 import pc from 'picocolors';
-import { onShutdown, onShutdownError } from '@davidwells/graceful-exit';
 import {
   clearCheckpoint,
   create,
@@ -12,13 +12,14 @@ import {
   down,
   findConfig,
   init,
+  markInterrupted,
   plan,
   showCheckpoint,
   status,
   up,
   type DoctorCheck,
-  type MigrationProgressEvent,
 } from '../lib/index.js';
+import { createProgressPrinter } from '../lib/progress.js';
 import { VERSION } from '../lib/version.js';
 
 type GlobalOptions = {
@@ -31,6 +32,13 @@ type JsonOption = {
 
 const shutdown = createMigrationShutdownController();
 let activeCommand: Promise<unknown> | undefined;
+let activeInterruptTarget:
+  | {
+    cwd: string;
+    stage: string;
+    migrationId: string;
+  }
+  | undefined;
 let signalCount = 0;
 
 installSignalHandlers();
@@ -126,6 +134,20 @@ program
   });
 
 program
+  .command('__mark-interrupted <migrationId>', { hidden: true })
+  .addOption(stageOpt)
+  .option('--message <message>', 'Interruption message.', 'forced shutdown')
+  .action(async (migrationId: string, opts: { stage: string; message: string }) => {
+    const result = await markInterrupted({
+      cwd: resolveCwd(),
+      stage: opts.stage,
+      migrationId,
+      message: opts.message,
+    });
+    if (!result.marked) process.exitCode = 2;
+  });
+
+program
   .command('up')
   .addOption(stageOpt)
   .option('--to <id>', 'Apply migrations only up to and including this id.')
@@ -135,16 +157,26 @@ program
   .description('Apply pending migrations.')
   .action(async (opts: { stage: string; to?: string; dryRun: boolean; force: boolean } & JsonOption) => {
     requireForceForUp(opts.stage, opts.dryRun, opts.force);
+    const progress = createProgressPrinter();
+    const cwd = resolveCwd();
     const promise = up({
       stage: opts.stage,
-      cwd: resolveCwd(),
+      cwd,
       to: opts.to,
       dryRun: opts.dryRun,
       signal: shutdown.signal,
-      onProgress: opts.json ? undefined : printProgress,
+      onProgress: opts.json ? undefined : progress.print,
+      onActiveMigration: opts.dryRun
+        ? undefined
+        : (migrationId) => {
+          activeInterruptTarget = migrationId
+            ? { cwd, stage: opts.stage, migrationId }
+            : undefined;
+        },
     });
     activeCommand = trackActive(promise);
     const result = await promise;
+    progress.finish();
     if (opts.json) {
       printJson(result);
     } else {
@@ -169,16 +201,18 @@ program
   .description('Roll back the last N completed migrations.')
   .action(async (opts: { stage: string; shift: number; dryRun: boolean; force: boolean } & JsonOption) => {
     requireForceForDown(opts.dryRun, opts.force);
+    const progress = createProgressPrinter();
     const promise = down({
       stage: opts.stage,
       cwd: resolveCwd(),
       shift: opts.shift,
       dryRun: opts.dryRun,
       signal: shutdown.signal,
-      onProgress: opts.json ? undefined : printProgress,
+      onProgress: opts.json ? undefined : progress.print,
     });
     activeCommand = trackActive(promise);
     const result = await promise;
+    progress.finish();
     if (opts.json) {
       printJson(result);
     } else {
@@ -311,21 +345,11 @@ function printCurrent(
   console.log(`node: ${result.node}`);
 }
 
-function printProgress(event: MigrationProgressEvent): void {
-  if (event.message) {
-    console.log(pc.gray(`[${event.migrationId ?? 'migration'}] ${event.message}`));
-    return;
-  }
-  const parts = Object.entries(event)
-    .filter(([key, value]) => key !== 'migrationId' && value !== undefined)
-    .map(([key, value]) => `${key}=${String(value)}`);
-  if (parts.length > 0) console.log(pc.gray(`[${event.migrationId ?? 'migration'}] ${parts.join(' ')}`));
-}
-
 function colorStatus(status: string): string {
   if (status === 'completed') return pc.green(status);
   if (status === 'pending') return pc.yellow(status);
   if (status === 'in_progress') return pc.cyan(status);
+  if (status === 'interrupted') return pc.yellow(status);
   if (status === 'failed' || status === 'orphan') return pc.red(status);
   return status;
 }
@@ -369,20 +393,6 @@ function trackActive<T>(promise: Promise<T>): Promise<undefined> {
 }
 
 function installSignalHandlers(): void {
-  onShutdown('ddb-migrate-active-command', async () => {
-    shutdown.request('process shutdown requested');
-    if (activeCommand) {
-      console.error(pc.yellow('Shutdown requested; waiting for the active migration to finish or checkpoint.'));
-      await activeCommand.catch(() => undefined);
-    }
-    if (shutdown.isRequested()) process.exit(130);
-  });
-
-  onShutdownError((err) => {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(pc.red(`Shutdown failed: ${message}`));
-  });
-
   for (const event of ['SIGINT', 'SIGTERM', 'SIGQUIT'] as const) {
     process.on(event, () => {
       signalCount += 1;
@@ -395,8 +405,46 @@ function installSignalHandlers(): void {
         );
         return;
       }
-      console.error(pc.red(`Received ${event} again; forcing exit.`));
-      process.exit(130);
+      console.error(pc.red(`Received ${event} again; forcing exit after interruption persistence attempt.`));
+      void forceExitAfterInterruptPersistence();
     });
   }
+}
+
+async function forceExitAfterInterruptPersistence(): Promise<void> {
+  if (activeCommand) {
+    await Promise.race([
+      activeCommand.catch(() => undefined),
+      new Promise((resolve) => setTimeout(resolve, 2500)),
+    ]);
+  }
+  runSynchronousInterruptFallback();
+  process.exit(130);
+}
+
+function runSynchronousInterruptFallback(): void {
+  if (!activeInterruptTarget) return;
+  const result = spawnSync(
+    process.execPath,
+    [
+      ...process.execArgv,
+      process.argv[1] ?? '',
+      '--cwd',
+      activeInterruptTarget.cwd,
+      '__mark-interrupted',
+      activeInterruptTarget.migrationId,
+      '--stage',
+      activeInterruptTarget.stage,
+      '--message',
+      'forced shutdown after second signal',
+    ],
+    {
+      stdio: ['ignore', 'ignore', 'pipe'],
+      timeout: 5000,
+      env: process.env,
+    },
+  );
+  if (result.status === 0 || result.status === 2) return;
+  const detail = result.error?.message || result.stderr?.toString().trim();
+  console.error(pc.red(`Failed to persist interrupted status before force exit${detail ? `: ${detail}` : '.'}`));
 }

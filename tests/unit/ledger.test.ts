@@ -42,4 +42,33 @@ describe('Ledger', () => {
       ':status': 'in_progress',
     });
   });
+
+  it('marks a migration interrupted without replacing checkpoint data', async () => {
+    const sent: unknown[] = [];
+    const ledger = new Ledger(
+      {} as DynamoDBClient,
+      { send: async (command: unknown) => sent.push(command) } as DynamoDBDocumentClient,
+      {
+        tableName: 'migration-ledger',
+        scope: 'app',
+        stage: 'dev',
+      },
+    );
+
+    await ledger.markInterrupted('2026-01-01_demo', 'received SIGINT');
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toBeInstanceOf(UpdateCommand);
+
+    const input = (sent[0] as UpdateCommand).input;
+    expect(input.UpdateExpression).toContain('#status = :s');
+    expect(input.UpdateExpression).not.toContain('checkpoint');
+    expect(input.ConditionExpression).toContain('#status <> :completed');
+    expect(input.ExpressionAttributeValues).toMatchObject({
+      ':s': 'interrupted',
+      ':e': 'received SIGINT',
+      ':completed': 'completed',
+    });
+    expect(input.ExpressionAttributeValues).toHaveProperty(':t');
+  });
 });

@@ -30,6 +30,11 @@ export {
   type CheckpointClearOptions,
   type CheckpointClearResult,
 } from './actions/checkpoint.js';
+export {
+  markInterrupted,
+  type MarkInterruptedOptions,
+  type MarkInterruptedResult,
+} from './actions/interrupt.js';
 export { init, type InitResult } from './actions/init.js';
 export { create } from './actions/create.js';
 export { VERSION } from './version.js';

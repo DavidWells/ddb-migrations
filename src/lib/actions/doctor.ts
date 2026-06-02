@@ -115,8 +115,8 @@ export async function doctor(opts: DoctorOptions): Promise<DoctorResult> {
     if (result.orphaned.length > 0) checks.push(warn('orphans', `${result.orphaned.length} orphaned ledger row(s)`));
     else checks.push(pass('orphans', 'no orphaned ledger rows'));
 
-    if (result.blocked.length > 0) checks.push(warn('resumable', `${result.blocked.length} failed/in-progress migration(s)`));
-    else checks.push(pass('resumable', 'no failed or in-progress migrations'));
+    if (result.blocked.length > 0) checks.push(warn('resumable', `${result.blocked.length} failed/in-progress/interrupted migration(s)`));
+    else checks.push(pass('resumable', 'no failed, in-progress, or interrupted migrations'));
   } catch (err) {
     checks.push(fail('plan', messageOf(err)));
   }

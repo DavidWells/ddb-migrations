@@ -23,6 +23,8 @@ export type UpOptions = {
   signal?: AbortSignal;
   /** Structured progress callback for long-running migrations. */
   onProgress?: (event: MigrationProgressEvent) => void;
+  /** Notifies the caller when the active migration changes. Intended for CLI shutdown fallback. */
+  onActiveMigration?: (migrationId: string | undefined) => void;
   /** Validate configured accountId before non-dry-run writes. */
   checkAccount?: boolean;
 };
@@ -82,9 +84,26 @@ export async function up(opts: UpOptions): Promise<UpResult> {
   const applied: string[] = [];
   const skipped: string[] = pending.filter((p) => !slice.includes(p)).map((p) => p.id);
   const shutdown = createMigrationShutdownController(opts.signal);
+  let activeMigrationId: string | undefined;
+  let interruptMarkedFor: string | undefined;
+  let interruptMarkPromise: Promise<void> | undefined;
+
+  const markActiveInterrupted = (message: string): Promise<void> => {
+    if (opts.dryRun || !activeMigrationId) return Promise.resolve();
+    if (interruptMarkedFor === activeMigrationId && interruptMarkPromise) return interruptMarkPromise;
+    interruptMarkedFor = activeMigrationId;
+    interruptMarkPromise = ledger.markInterrupted(activeMigrationId, message).then(() => undefined);
+    return interruptMarkPromise;
+  };
+
+  shutdown.signal.addEventListener('abort', () => {
+    const message = shutdown.reason() ?? 'Shutdown requested';
+    interruptMarkPromise = markActiveInterrupted(message).catch(() => undefined);
+  });
 
   for (const f of slice) {
     if (shutdown.isRequested()) {
+      await markActiveInterrupted(shutdown.reason() ?? 'Shutdown requested before migration start');
       return {
         applied,
         skipped,
@@ -98,6 +117,8 @@ export async function up(opts: UpOptions): Promise<UpResult> {
     const log = makeLogger(`[${f.id}]`);
     log.info(opts.dryRun ? 'starting (dry-run)' : 'starting');
     const mod = await loadMigration(f.fullPath);
+    interruptMarkedFor = undefined;
+    interruptMarkPromise = undefined;
     if (!opts.dryRun) {
       await ledger.markStart({
         migrationId: f.id,
@@ -105,6 +126,8 @@ export async function up(opts: UpOptions): Promise<UpResult> {
         appliedBy: `${os.userInfo().username}@${os.hostname()}`,
       });
     }
+    activeMigrationId = f.id;
+    opts.onActiveMigration?.(f.id);
     const ctx = makeContext({
       cfg,
       stage: opts.stage,
@@ -122,6 +145,7 @@ export async function up(opts: UpOptions): Promise<UpResult> {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (isMigrationInterruptedError(err)) {
+        await markActiveInterrupted(message);
         log.warn(message);
         return { applied, skipped, interrupted: { id: f.id, message } };
       }
@@ -130,11 +154,20 @@ export async function up(opts: UpOptions): Promise<UpResult> {
       return { applied, skipped, failed: { id: f.id, message } };
     }
     const dur = Date.now() - start;
+    if (shutdown.isRequested()) {
+      const message = shutdown.reason() ?? 'Shutdown requested after migration returned';
+      await markActiveInterrupted(message);
+      log.warn(message);
+      return { applied, skipped, interrupted: { id: f.id, message } };
+    }
     if (!opts.dryRun) await ledger.markComplete(f.id, dur);
     log.info(`done in ${dur}ms${opts.dryRun ? ' (dry-run)' : ''}`);
     applied.push(f.id);
+    activeMigrationId = undefined;
+    opts.onActiveMigration?.(undefined);
 
     if (shutdown.isRequested()) {
+      await markActiveInterrupted(shutdown.reason() ?? 'Shutdown requested; stopped before next migration');
       return {
         applied,
         skipped,

@@ -1,4 +1,5 @@
 import {
+  ConditionalCheckFailedException,
   CreateTableCommand,
   DescribeTableCommand,
   DynamoDBClient,
@@ -103,7 +104,7 @@ export class Ledger {
       'appliedAt = :appliedAt',
       '#status = :status',
     ];
-    const removeClauses = ['errorMessage', 'durationMs', 'itemsProcessed'];
+    const removeClauses = ['errorMessage', 'interruptedAt', 'durationMs', 'itemsProcessed'];
     const values: Record<string, unknown> = {
       ':scope': this.options.scope,
       ':stage': this.options.stage,
@@ -164,7 +165,7 @@ export class Ledger {
       new UpdateCommand({
         TableName: this.tableName,
         Key: this.key(migrationId),
-        UpdateExpression: `SET #status = :s, durationMs = :d${itemsClause} REMOVE errorMessage`,
+        UpdateExpression: `SET #status = :s, durationMs = :d${itemsClause} REMOVE errorMessage, interruptedAt`,
         ExpressionAttributeNames: { '#status': 'status' },
         ExpressionAttributeValues: values,
       }),
@@ -176,11 +177,38 @@ export class Ledger {
       new UpdateCommand({
         TableName: this.tableName,
         Key: this.key(migrationId),
-        UpdateExpression: 'SET #status = :s, errorMessage = :e',
+        UpdateExpression: 'SET #status = :s, errorMessage = :e REMOVE interruptedAt',
         ExpressionAttributeNames: { '#status': 'status' },
         ExpressionAttributeValues: { ':s': 'failed', ':e': errorMessage },
       }),
     );
+  }
+
+  async markInterrupted(migrationId: string, message: string): Promise<boolean> {
+    try {
+      await this.doc.send(
+        new UpdateCommand({
+          TableName: this.tableName,
+          Key: this.key(migrationId),
+          UpdateExpression: 'SET #status = :s, errorMessage = :e, interruptedAt = :t',
+          ConditionExpression:
+            'attribute_exists(pk) AND attribute_exists(sk) AND #status <> :completed',
+          ExpressionAttributeNames: { '#status': 'status' },
+          ExpressionAttributeValues: {
+            ':s': 'interrupted' satisfies LedgerEntry['status'],
+            ':e': message,
+            ':t': new Date().toISOString(),
+            ':completed': 'completed' satisfies LedgerEntry['status'],
+          },
+        }),
+      );
+      return true;
+    } catch (err) {
+      if (err instanceof ConditionalCheckFailedException || isConditionalCheckFailed(err)) {
+        return false;
+      }
+      throw err;
+    }
   }
 
   async remove(migrationId: string): Promise<void> {
@@ -220,6 +248,15 @@ export class Ledger {
   private key(migrationId: string): { pk: string; sk: string } {
     return { pk: this.pk, sk: ledgerSk(migrationId) };
   }
+}
+
+function isConditionalCheckFailed(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'name' in err &&
+    err.name === 'ConditionalCheckFailedException'
+  );
 }
 
 export function ledgerPk(scope: string, stage: string): string {

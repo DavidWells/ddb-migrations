@@ -113,7 +113,7 @@ export async function plan(opts: PlanOptions): Promise<PlanResult> {
       .filter((migration) => migration.checksumMatch === false)
       .map((migration) => migration.id),
     blocked: migrations
-      .filter((migration) => migration.status === 'failed' || migration.status === 'in_progress')
+      .filter((migration) => migration.status === 'failed' || migration.status === 'in_progress' || migration.status === 'interrupted')
       .map((migration) => migration.id),
     orphaned: migrations
       .filter((migration) => migration.status === 'orphan')
@@ -147,6 +147,7 @@ function reasonForFile(
   if (status === 'completed') return 'already completed';
   if (status === 'failed') return 'previous run failed; up will retry unless drifted';
   if (status === 'in_progress') return 'previous run interrupted; up will resume/retry';
+  if (status === 'interrupted') return 'previous run was interrupted; up will resume/retry';
   if (to) return `pending but outside --to ${to} slice`;
   return 'pending';
 }

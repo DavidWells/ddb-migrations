@@ -47,7 +47,7 @@ export type ResolvedStage = StageConfig & {
   ledgerEndpoint?: string;
 };
 
-export type LedgerStatus = 'completed' | 'in_progress' | 'failed';
+export type LedgerStatus = 'completed' | 'in_progress' | 'interrupted' | 'failed';
 
 export type LedgerEntry = {
   pk: string;
@@ -77,6 +77,10 @@ export type Logger = {
 export type MigrationProgressEvent = {
   /** Migration id is injected by the runner when omitted by migration code. */
   migrationId?: string;
+  /** Optional phase label such as scan/apply/verify. */
+  phase?: string;
+  /** Optional operation label such as put/update/delete. */
+  operation?: string;
   /** Human-readable progress message. */
   message?: string;
   /** Logical or physical table currently being scanned/written. */
@@ -87,6 +91,10 @@ export type MigrationProgressEvent = {
   deleted?: number;
   skipped?: number;
   checkpointed?: boolean;
+  done?: boolean;
+  total?: number;
+  remaining?: number;
+  etaSeconds?: number;
   [key: string]: unknown;
 };
 
