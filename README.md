@@ -163,6 +163,7 @@ The skill teaches the agent the config layout, safety rules, and CLI workflow so
 | `ledger.scope` | Optional namespace for ledger rows. Defaults to `appName`. |
 | `ledger.region` | Region the ledger table lives in. Defaults to the active stage's `region`. Set this to centralize the ledger when app tables span regions. |
 | `ledger.endpoint` | AWS endpoint override for the ledger client only (e.g. for a local ledger). |
+| `ledger.create` | Create the ledger table when it is missing. Defaults to `true`. With `false`, commands that need it throw `LedgerMissingError` (`code: 'LEDGER_MISSING'`) and never call `CreateTable`; use this when your infrastructure owns the table. |
 | `observability.sdkStatsEnabled` | Wrap migration app clients and collect SDK `send()` stats. Defaults to `true`. |
 | `observability.captureConsumedCapacity` | Request `ReturnConsumedCapacity=TOTAL` on supported app commands. Defaults to `false`. |
 | `stages.<name>.region` | AWS region for this stage's app tables. **Required.** |
@@ -258,6 +259,7 @@ For more patterns — idempotent backfills, expand-and-contract renames, paralle
 | `throwIfStopped()` | Throws `MigrationInterruptedError` when shutdown has been requested, leaving the ledger row `in_progress` (later `up` retries). |
 | `progress(event)` | Emit a structured progress event for the CLI's renderer. |
 | `sdkStats` | Per-migration DynamoDB app-client `send()` stats. Use `snapshot()` / `reset()`. |
+| `params` | Frozen shallow copy of `up({ params })`. An empty object when unset (and always for the CLI). |
 | `checkpoint(value)` | Persist arbitrary JSON state on the ledger row for resume after a crash. |
 | `getCheckpoint()` | Read the last checkpoint value. |
 
@@ -272,7 +274,7 @@ ddb-migrate [-C <project>] create <description>                                 
 ddb-migrate [-C <project>] status     --stage <name>                            [--json]
 ddb-migrate [-C <project>] plan       --stage <name> [--to <id>]                [--json]
 ddb-migrate [-C <project>] doctor     --stage <name>                            [--json]
-ddb-migrate [-C <project>] up         --stage <name> [--to <id>] [--dry-run] [--force] [--capacity] [--no-sdk-stats] [--json]
+ddb-migrate [-C <project>] up         --stage <name> [--to <id>] [--dry-run] [--force] [--capacity] [--no-sdk-stats] [--lock-owner <owner> [--lock-ttl <seconds>]] [--json]
 ddb-migrate [-C <project>] down       --stage <name> [--shift N] [--dry-run] [--force] [--capacity] [--no-sdk-stats] [--json]
 ddb-migrate [-C <project>] checkpoint show  <migrationId> --stage <name>        [--json]
 ddb-migrate [-C <project>] checkpoint clear <migrationId> --stage <name> --force [--json]
@@ -295,6 +297,8 @@ Use `-C, --cwd <path>` to run from outside the project directory; `DDB_MIGRATE_C
 
 **Exit codes:** `0` success · `1` failure · `130` interrupted by signal.
 
+`up --lock-owner <owner>` takes the stage's run lock before reading the ledger and fails with `LOCK_HELD` (naming the holder) when another owner holds a live lease. `--lock-ttl` sets the lease length in seconds (default `3600`); the lease is renewed before each migration and on each `ctx.checkpoint()`. See [Run lock](#run-lock).
+
 ```bash
 ddb-migrate -C services/api current
 ddb-migrate -C services/api plan --stage dev
@@ -305,7 +309,7 @@ ddb-migrate -C services/api up   --stage dev --dry-run
 
 ## Operator workflow
 
-`plan` is intentionally different from `up --dry-run`: it does **not** import or execute migration code. It compares migration files with the ledger and prints what would be selected for execution. Use `plan` first, then `up --dry-run` to exercise the full code path with `dryRun=true`.
+`plan` is intentionally different from `up --dry-run`: it does **not** import or execute migration code (the programmatic `plan({ includeMeta: true })` imports modules to read their exports, but never calls `up`). It compares migration files with the ledger and prints what would be selected for execution. Use `plan` first, then `up --dry-run` to exercise the full code path with `dryRun=true`.
 
 ```bash
 ddb-migrate -C services/api current
@@ -342,6 +346,63 @@ Inspect or clear a stuck checkpoint:
 ddb-migrate checkpoint show  <migrationId> --stage dev
 ddb-migrate checkpoint clear <migrationId> --stage dev --force
 ```
+
+---
+
+## Programmatic API
+
+Every CLI verb is also a function exported from `ddb-migration-tools`. `up`, `plan`, `status` and `doctor` accept extra options for running migrations from another program, such as a deploy pipeline. All of them are opt-in: leave them unset and behavior matches the CLI.
+
+```ts
+import { plan, up } from 'ddb-migration-tools';
+
+const result = await up({
+  stage: 'dev',
+  cwd: '/path/to/service',          // base for migrationsDir
+  config: { appName: 'orders', migrationsDir: 'migrations', ledger: { tableName: 'orders-migrations', create: false }, stages: { dev: { region: 'us-east-1' } } },
+  clients: { app: { raw: appClient }, ledger: { raw: ledgerClient } },
+  appliedBy: 'deployer:run-42',
+  params: { deploymentId: 'dep_1' },
+  lock: { owner: 'deployer:run-42', ttlSeconds: 3900 },
+  only: ['2026-10-01_12-00_backfill-status'],
+  onEvent: (event) => console.log('migration event', event),
+});
+```
+
+| Option | Actions | Effect |
+| --- | --- | --- |
+| `config` | `up` `plan` `status` `doctor` | Config object (same shape as the config file). No config file is read; `cwd` still sets the base for `migrationsDir`. `plan`/`doctor` report `configPath` as `<options.config>`. |
+| `clients` | `up` `plan` `status` `doctor` | `{ app?, ledger? }`, each `{ raw: DynamoDBClient, doc?: DynamoDBDocumentClient }`. The ledger client carries every ledger command; migration code (`ctx.ddb` / `ctx.ddbRaw`) sees only the app client. A missing one is built from the stage config with the default credential chain; an injected app client is never reused for the ledger. With an injected app client, the `accountId` check uses its credentials. |
+| `appliedBy` | `up` | Replaces `user@host` as the ledger row's `appliedBy`. |
+| `params` | `up` | Exposed to migrations as `ctx.params`. |
+| `lock` | `up` | `{ owner, ttlSeconds, onTakeover? }` takes the run lock (see [Run lock](#run-lock)). `{ owner, held: true, ttlSeconds? }` is for a caller that already holds it: `up` only verifies ownership, never releases, and heartbeats only outside a dry-run. |
+| `only` | `up` | Apply just these pending ids, in lexical order; the rest stay pending. An id that is not pending is an error, and so is combining it with `to`. |
+| `onEvent` | `up` | Receives `start`, `progress`, `checkpoint`, `complete`, `fail` and `interrupt` events with the migration id. |
+| `includeMeta` | `plan` | Import each pending migration and return its non-function exports as `pending[].meta`. This runs module top-level code, so keep migrations free of top-level side effects. |
+
+`up` resolves with `applied` / `skipped` / `failed` / `interrupted` as before, plus:
+
+- `results`: one entry per executed migration, `{ id, checksum, status, durationMs, sdkStats?, progress?, error? }`, where `status` is `completed`, `dry-run`, `failed` or `interrupted` and `progress` is the last `ctx.progress()` event;
+- `pending`: ids still not completed after the run (a dry-run completes nothing);
+- `lock`: `{ owner, takeover, previousOwner?, released }` when `lock` was used.
+
+`plan` also returns `pending: [{ id, checksum, path, meta? }]` for every not-completed migration.
+
+### Run lock
+
+The lock is one row per scope and stage in the ledger table: `pk = LOCK#SCOPE#<scope>#STAGE#<stage>`, `sk = LOCK`, with `owner`, `acquiredAt`, `expiresAt` (epoch seconds), `heartbeatAt`, and `releasedAt` / `previousOwner` when set. It is a lease:
+
+- **Acquire** is a conditional put that succeeds when the row is missing, expired, released or already owned by the same owner. Otherwise it throws `LockHeldError` (`code: 'LOCK_HELD'`, `holder`, `expiresAt`). Taking over another owner's expired, unreleased lease is reported as `takeover` and passed to `onTakeover(previous)`.
+- **Heartbeat** extends an unreleased lease owned by the caller. **Release** sets `expiresAt = 0` and `releasedAt`; the row is never deleted. Both throw `LockLostError` (`code: 'LOCK_LOST'`) when the caller no longer owns the lease.
+- `up` stops at the next heartbeat once its lease is lost: the migration is reported as failed and its ledger row stays `in_progress` for a later run to resume.
+
+`acquireLock`, `heartbeatLock`, `releaseLock`, `assertLockHeld` and `readLock` are exported for callers that hold the lease across several `up` calls, for example a parent process that heartbeats while child processes run with `lock: { owner, held: true }`.
+
+Lease expiry compares the writer's clock with `expiresAt`; keep the TTL well above expected clock skew between runners.
+
+### Ledger write conditions
+
+Each `up` run stamps a fresh `runToken` on the ledger row when it starts a migration. Its later writes to that row (`completed`, `failed`, `interrupted`, checkpoints) require that token and a row that is not `completed`. A run that was superseded by another run, or that reaches a row someone else completed, gets `LedgerConflictError` (`code: 'LEDGER_CONFLICT'`) instead of rewriting it, and `up` reports the migration as failed without touching the row. A completed row is never rewritten.
 
 ---
 
@@ -497,6 +558,10 @@ Override the physical table name with `--param='ledgerTableName=my-ledger'`. See
 | Status `interrupted` | Operator hit Ctrl-C during a run | Rerun `up`. The retry resumes from the last `ctx.checkpoint()`. |
 | Status `orphan` | Someone deleted an applied migration file | Restore the file from git, or accept the orphan as a historical record. Forward-only repair if behavior needs to change. |
 | `ResourceNotFoundException: <ledger-table>` | Ledger table not deployed in this account/region | Deploy `stack/` to the target account/region, or set `ledger.region` to a region where it does exist. |
+| `LEDGER_MISSING` | `ledger.create` is `false` and the ledger table does not exist | Deploy the stack that owns the ledger table, or check `ledger.tableName` / region. |
+| `LOCK_HELD` | Another runner holds a live lease on the stage | Wait for it, or for the lease to expire (`expiresAt`), then rerun. |
+| `LOCK_LOST` | This run's lease expired or was taken over | Raise the lock TTL or checkpoint more often; rerun `up` to resume. |
+| `LEDGER_CONFLICT` | Another run started or completed the same migration concurrently | Check `status`; rerun `up` if the migration is still pending. |
 | Wrong table prefix in resolved table name | Stage `tablePrefix` mismatch | Check `ddb-migrate current` + `doctor --stage <s>`; `ctx.tableName('users')` returns `<prefix>users`. |
 | AWS credential errors | Default credential chain didn't resolve | Set `AWS_PROFILE`, or env vars, or run inside a role-bound environment. `doctor` runs `sts:GetCallerIdentity` to surface this. |
 
@@ -504,7 +569,7 @@ Override the physical table name with `--param='ledgerTableName=my-ledger'`. See
 
 ## Limitations
 
-- **No distributed lock** across concurrent `up` runs on the same stage. Coordinate at the CI level (single-flight workflow).
+- **The run lock is opt-in.** Without `--lock-owner` / `lock`, concurrent `up` runs on the same stage are not serialized; coordinate at the CI level or use the lock.
 - **No built-in parallel-scan helper.** Migrations roll their own; `examples/2026-01-03-000000-parallel-scan-with-checkpoints.ts` shows the pattern.
 - **No `--from` flag.** `up` always replays from the oldest pending migration; bound the upper end with `--to`.
 - **DynamoDB only.** Local development against `amazon/dynamodb-local` works (set `endpoint`), but there's no other DB target.

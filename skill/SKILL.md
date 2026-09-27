@@ -174,6 +174,8 @@ npx ddb-migrate checkpoint show  <migrationId> --stage staging
 npx ddb-migrate checkpoint clear <migrationId> --stage staging --force
 ```
 
+When more than one runner can reach a stage (CI plus a laptop, parallel pipelines), pass `--lock-owner <who>` to `up`. A held lease fails with `LOCK_HELD` and names the holder; do not work around it.
+
 Add `--json` to any read-style command (`status`, `plan`, `doctor`, `current`, `checkpoint show`) for CI/agent consumption. `up --json` / `down --json` print the final result as JSON and suppress progress events. Exit codes: `0` success, `1` failure, `130` interrupted by signal.
 
 ## Ledger Stack
