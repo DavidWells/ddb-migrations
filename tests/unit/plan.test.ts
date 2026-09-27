@@ -77,4 +77,54 @@ describe('plan', () => {
 
     expect(result.blocked).toEqual(['2026-01-01_first', '2026-01-02_second', '2026-01-03_third']);
   });
+
+  it('lists pending migrations with checksum and path, without importing them by default', async () => {
+    const cwd = makeProject();
+    writeFileSync(path.join(cwd, 'migrations', '2026-01-04_throws-on-import.mjs'), 'throw new Error("imported")');
+    vi.spyOn(Ledger.prototype, 'listAll').mockResolvedValue([]);
+
+    const result = await plan({ cwd, stage: 'dev' });
+
+    expect(result.pending.map((migration) => migration.id)).toEqual([
+      '2026-01-01_first',
+      '2026-01-02_second',
+      '2026-01-03_third',
+      '2026-01-04_throws-on-import',
+    ]);
+    expect(result.pending[0]).toEqual({
+      id: '2026-01-01_first',
+      checksum: expect.stringMatching(/^[0-9a-f]{64}$/),
+      path: path.join(cwd, 'migrations', '2026-01-01_first.mjs'),
+    });
+  });
+
+  it('reads the non-function exports of pending migrations with includeMeta', async () => {
+    const cwd = makeProject();
+    writeFileSync(
+      path.join(cwd, 'migrations', '2026-01-02_second.mjs'),
+      [
+        "export const description = 'Strip ttl'",
+        "export const phase = 'post-deploy'",
+        'export const destructive = true',
+        "export const tables = ['access']",
+        'export async function up() {}',
+        'export function helper() {}',
+      ].join('\n'),
+    );
+    vi.spyOn(Ledger.prototype, 'listAll').mockResolvedValue([
+      entry('2026-01-01_first', { status: 'completed' }),
+    ]);
+
+    const result = await plan({ cwd, stage: 'dev', includeMeta: true });
+
+    expect(result.pending.map((migration) => migration.id)).toEqual(['2026-01-02_second', '2026-01-03_third']);
+    expect(result.pending[0]?.meta).toEqual({
+      description: 'Strip ttl',
+      phase: 'post-deploy',
+      destructive: true,
+      tables: ['access'],
+    });
+    expect(result.pending[1]?.meta).toEqual({});
+  });
 });
+

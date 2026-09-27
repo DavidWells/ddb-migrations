@@ -3,6 +3,7 @@ import { INLINE_CONFIG_PATH, findConfig, resolveConfig, resolveStage } from '../
 import { createClients, type InjectedClients } from '../ddb.js';
 import { stageLedger, type Ledger } from '../ledger.js';
 import { listMigrationFiles } from '../migrations.js';
+import { loadMigrationMeta } from '../runner.js';
 import type { Config, LedgerEntry, LedgerStatus } from '../types.js';
 
 export type PlanMigration = {
@@ -12,6 +13,15 @@ export type PlanMigration = {
   checksumMatch: boolean | null;
   willRun: boolean;
   reason: string;
+};
+
+export type PlanPendingMigration = {
+  id: string;
+  checksum: string;
+  /** Absolute path of the migration file or directory entrypoint. */
+  path: string;
+  /** Non-function exports of the module. Present only with `includeMeta`. */
+  meta?: Record<string, unknown>;
 };
 
 export type PlanResult = {
@@ -28,6 +38,8 @@ export type PlanResult = {
   drifted: string[];
   blocked: string[];
   orphaned: string[];
+  /** Every migration not yet completed, in lexical order (ignores `to`). */
+  pending: PlanPendingMigration[];
 };
 
 export type PlanOptions = {
@@ -38,6 +50,11 @@ export type PlanOptions = {
   /** Caller-built ledger client that replaces the default-chain one. */
   clients?: InjectedClients;
   to?: string;
+  /**
+   * Import each pending migration to read its non-function exports into `pending[].meta`.
+   * Runs module top-level code, so migrations must keep it side-effect free.
+   */
+  includeMeta?: boolean;
 };
 
 export async function plan(opts: PlanOptions): Promise<PlanResult> {
@@ -93,6 +110,16 @@ export async function plan(opts: PlanOptions): Promise<PlanResult> {
 
   migrations.sort((a, b) => a.id.localeCompare(b.id));
 
+  const pendingDetails: PlanPendingMigration[] = [];
+  for (const file of pending) {
+    pendingDetails.push({
+      id: file.id,
+      checksum: file.checksum,
+      path: file.fullPath,
+      ...(opts.includeMeta ? { meta: await loadMigrationMeta(file.fullPath) } : {}),
+    });
+  }
+
   return {
     cwd,
     configPath,
@@ -115,6 +142,7 @@ export async function plan(opts: PlanOptions): Promise<PlanResult> {
     orphaned: migrations
       .filter((migration) => migration.status === 'orphan')
       .map((migration) => migration.id),
+    pending: pendingDetails,
   };
 }
 

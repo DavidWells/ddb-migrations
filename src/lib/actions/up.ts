@@ -19,6 +19,8 @@ export type UpOptions = {
   stage: string;
   /** Apply migrations only up to and including this id. */
   to?: string;
+  /** Apply only these pending ids, in lexical order; the rest stay pending. Cannot be combined with `to`. */
+  only?: string[];
   /** Run with ctx.dryRun=true and skip ledger writes. */
   dryRun?: boolean;
   cwd?: string;
@@ -61,6 +63,7 @@ export type UpResult = {
 };
 
 export async function up(opts: UpOptions): Promise<UpResult> {
+  if (opts.only && opts.to) throw new Error('up options only and to cannot be combined.');
   const cwd = opts.cwd ?? process.cwd();
   const cfg = await resolveConfig(cwd, opts.config);
   const sc = resolveStage(cfg, opts.stage);
@@ -127,7 +130,15 @@ async function applyPending({ opts, cfg, cwd, clients, ledger, lock }: ApplyPend
   });
 
   let slice = pending;
-  if (opts.to) {
+  if (opts.only) {
+    const pendingIds = new Set(pending.map((p) => p.id));
+    const missing = opts.only.find((id) => !pendingIds.has(id));
+    if (missing !== undefined) {
+      throw new Error(`Migration '${missing}' is not pending (not found, or already completed).`);
+    }
+    const only = new Set(opts.only);
+    slice = pending.filter((p) => only.has(p.id));
+  } else if (opts.to) {
     const idx = pending.findIndex((p) => p.id === opts.to);
     if (idx === -1) {
       throw new Error(`Migration '${opts.to}' is not pending (not found, or already completed).`);

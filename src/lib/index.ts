@@ -28,7 +28,13 @@ export { createClients, type Clients, type ClientPair, type InjectedClients } fr
 export { up, type UpOptions, type UpResult } from './actions/up.js';
 export { down, type DownOptions, type DownResult } from './actions/down.js';
 export { status, type StatusItem, type StatusOptions } from './actions/status.js';
-export { plan, type PlanMigration, type PlanOptions, type PlanResult } from './actions/plan.js';
+export {
+  plan,
+  type PlanMigration,
+  type PlanOptions,
+  type PlanPendingMigration,
+  type PlanResult,
+} from './actions/plan.js';
 export { doctor, type DoctorCheck, type DoctorOptions, type DoctorResult } from './actions/doctor.js';
 export {
   showCheckpoint,

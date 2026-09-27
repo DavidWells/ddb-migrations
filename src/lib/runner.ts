@@ -47,6 +47,20 @@ export async function loadMigration(fullPath: string): Promise<MigrationModule> 
   };
 }
 
+/**
+ * Imports a migration and returns its non-function exports (description, phase, destructive, ...).
+ * Importing runs the module's top level, so migrations must keep it free of side effects.
+ */
+export async function loadMigrationMeta(fullPath: string): Promise<Record<string, unknown>> {
+  if (path.extname(fullPath) === '.ts' || path.extname(fullPath) === '.mts') {
+    await ensureTsLoader();
+  }
+  const mod = (await import(pathToFileURL(fullPath).href)) as Record<string, unknown>;
+  return Object.fromEntries(
+    Object.entries(mod).filter(([name, value]) => name !== 'default' && typeof value !== 'function'),
+  );
+}
+
 export type ContextOpts = {
   cfg: Config;
   stage: string;
