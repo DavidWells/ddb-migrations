@@ -1,9 +1,9 @@
 import { ResourceNotFoundException } from '@aws-sdk/client-dynamodb';
-import { findConfig, loadConfig, resolveStage } from '../config.js';
+import { INLINE_CONFIG_PATH, findConfig, resolveConfig, resolveStage } from '../config.js';
 import { createClients } from '../ddb.js';
 import { Ledger } from '../ledger.js';
 import { listMigrationFiles } from '../migrations.js';
-import type { LedgerEntry, LedgerStatus } from '../types.js';
+import type { Config, LedgerEntry, LedgerStatus } from '../types.js';
 
 export type PlanMigration = {
   id: string;
@@ -33,13 +33,15 @@ export type PlanResult = {
 export type PlanOptions = {
   stage: string;
   cwd?: string;
+  /** Config object used instead of the cwd config file. `cwd` still sets the base for migrationsDir. */
+  config?: Config;
   to?: string;
 };
 
 export async function plan(opts: PlanOptions): Promise<PlanResult> {
   const cwd = opts.cwd ?? process.cwd();
-  const configPath = await findConfig(cwd);
-  const cfg = await loadConfig(cwd);
+  const configPath = opts.config ? INLINE_CONFIG_PATH : await findConfig(cwd);
+  const cfg = await resolveConfig(cwd, opts.config);
   const sc = resolveStage(cfg, opts.stage);
   const { ledgerRaw, ledgerDoc } = createClients(sc);
   const ledger = new Ledger(ledgerRaw, ledgerDoc, {

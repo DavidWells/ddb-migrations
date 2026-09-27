@@ -1,5 +1,5 @@
 import os from 'node:os';
-import { loadConfig, resolveStage } from '../config.js';
+import { resolveConfig, resolveStage } from '../config.js';
 import { createClients } from '../ddb.js';
 import { Ledger } from '../ledger.js';
 import { listMigrationFiles } from '../migrations.js';
@@ -10,7 +10,7 @@ import {
   isMigrationInterruptedError,
 } from '../shutdown.js';
 import { assertConfiguredAccount } from '../aws-identity.js';
-import type { MigrationProgressEvent } from '../types.js';
+import type { Config, MigrationProgressEvent } from '../types.js';
 import type { DdbSdkStatsSnapshot } from '../sdk-stats.js';
 
 export type UpOptions = {
@@ -20,6 +20,8 @@ export type UpOptions = {
   /** Run with ctx.dryRun=true and skip ledger writes. */
   dryRun?: boolean;
   cwd?: string;
+  /** Config object used instead of the cwd config file. `cwd` still sets the base for migrationsDir. */
+  config?: Config;
   /** Cooperative shutdown signal. The current migration can stop at a page boundary. */
   signal?: AbortSignal;
   /** Structured progress callback for long-running migrations. */
@@ -44,7 +46,7 @@ export type UpResult = {
 
 export async function up(opts: UpOptions): Promise<UpResult> {
   const cwd = opts.cwd ?? process.cwd();
-  const cfg = await loadConfig(cwd);
+  const cfg = await resolveConfig(cwd, opts.config);
   const sc = resolveStage(cfg, opts.stage);
   if (!opts.dryRun && opts.checkAccount !== false) await assertConfiguredAccount(sc);
   const clients = createClients(sc);

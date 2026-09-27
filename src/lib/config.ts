@@ -37,6 +37,17 @@ export async function loadConfig(cwd: string = process.cwd()): Promise<Config> {
   return validate(candidate);
 }
 
+/** Reported as the config path when the caller passes `options.config` instead of a file. */
+export const INLINE_CONFIG_PATH = '<options.config>';
+
+/**
+ * Returns the passed config (validated) or loads the config file from cwd.
+ * A passed config means nothing in cwd is read here.
+ */
+export async function resolveConfig(cwd: string, config?: Config): Promise<Config> {
+  return config ? validate(config) : loadConfig(cwd);
+}
+
 function validate(cfg: unknown): Config {
   if (!cfg || typeof cfg !== 'object') {
     throw new Error('Config must be an object.');

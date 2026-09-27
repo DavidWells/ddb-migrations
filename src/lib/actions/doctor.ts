@@ -1,7 +1,8 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { DescribeTableCommand, ResourceNotFoundException } from '@aws-sdk/client-dynamodb';
-import { findConfig, loadConfig, resolveStage } from '../config.js';
+import { INLINE_CONFIG_PATH, findConfig, resolveConfig, resolveStage } from '../config.js';
+import type { Config } from '../types.js';
 import { createClients } from '../ddb.js';
 import { getCallerIdentity, type AwsCallerIdentity } from '../aws-identity.js';
 import { plan } from './plan.js';
@@ -28,6 +29,8 @@ export type DoctorResult = {
 export type DoctorOptions = {
   stage: string;
   cwd?: string;
+  /** Config object used instead of the cwd config file. `cwd` still sets the base for migrationsDir. */
+  config?: Config;
 };
 
 export async function doctor(opts: DoctorOptions): Promise<DoctorResult> {
@@ -39,8 +42,8 @@ export async function doctor(opts: DoctorOptions): Promise<DoctorResult> {
   let callerIdentity: AwsCallerIdentity | undefined;
 
   try {
-    configPath = await findConfig(cwd);
-    checks.push(pass('config', `found ${configPath}`));
+    configPath = opts.config ? INLINE_CONFIG_PATH : await findConfig(cwd);
+    checks.push(pass('config', opts.config ? 'passed in options.config' : `found ${configPath}`));
   } catch (err) {
     checks.push(fail('config', messageOf(err)));
     return finish({ cwd, stage: opts.stage, checks });
@@ -48,7 +51,7 @@ export async function doctor(opts: DoctorOptions): Promise<DoctorResult> {
 
   let cfg;
   try {
-    cfg = await loadConfig(cwd);
+    cfg = await resolveConfig(cwd, opts.config);
     checks.push(pass('config-load', 'config loaded and validated'));
   } catch (err) {
     checks.push(fail('config-load', messageOf(err)));
@@ -108,7 +111,7 @@ export async function doctor(opts: DoctorOptions): Promise<DoctorResult> {
   }
 
   try {
-    const result = await plan({ stage: opts.stage, cwd });
+    const result = await plan({ stage: opts.stage, cwd, config: opts.config });
     if (result.drifted.length > 0) checks.push(fail('drift', `${result.drifted.length} drifted migration(s)`));
     else checks.push(pass('drift', 'no checksum drift detected'));
 

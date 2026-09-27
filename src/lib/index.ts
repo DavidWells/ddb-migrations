@@ -16,7 +16,14 @@ export {
   isMigrationInterruptedError,
   type MigrationShutdownController,
 } from './shutdown.js';
-export { loadConfig, findConfig, resolveStage, resolveTableName } from './config.js';
+export {
+  loadConfig,
+  findConfig,
+  resolveConfig,
+  resolveStage,
+  resolveTableName,
+  INLINE_CONFIG_PATH,
+} from './config.js';
 export { up, type UpOptions, type UpResult } from './actions/up.js';
 export { down, type DownOptions, type DownResult } from './actions/down.js';
 export { status, type StatusItem, type StatusOptions } from './actions/status.js';

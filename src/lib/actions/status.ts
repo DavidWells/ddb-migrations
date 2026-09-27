@@ -1,8 +1,8 @@
-import { loadConfig, resolveStage } from '../config.js';
+import { resolveConfig, resolveStage } from '../config.js';
 import { createClients } from '../ddb.js';
 import { Ledger } from '../ledger.js';
 import { listMigrationFiles } from '../migrations.js';
-import type { LedgerStatus } from '../types.js';
+import type { Config, LedgerStatus } from '../types.js';
 
 export type StatusItem = {
   id: string;
@@ -15,11 +15,13 @@ export type StatusItem = {
 export type StatusOptions = {
   stage: string;
   cwd?: string;
+  /** Config object used instead of the cwd config file. `cwd` still sets the base for migrationsDir. */
+  config?: Config;
 };
 
 export async function status(opts: StatusOptions): Promise<StatusItem[]> {
   const cwd = opts.cwd ?? process.cwd();
-  const cfg = await loadConfig(cwd);
+  const cfg = await resolveConfig(cwd, opts.config);
   const sc = resolveStage(cfg, opts.stage);
   const { ledgerRaw, ledgerDoc } = createClients(sc);
   const ledger = new Ledger(ledgerRaw, ledgerDoc, {
