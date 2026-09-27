@@ -24,6 +24,8 @@ export type UpOptions = {
   config?: Config;
   /** Caller-built app/ledger clients that replace the default-chain ones. */
   clients?: InjectedClients;
+  /** Identity recorded as appliedBy on ledger rows. Defaults to user@host. */
+  appliedBy?: string;
   /** Cooperative shutdown signal. The current migration can stop at a page boundary. */
   signal?: AbortSignal;
   /** Structured progress callback for long-running migrations. */
@@ -135,7 +137,7 @@ export async function up(opts: UpOptions): Promise<UpResult> {
       await ledger.markStart({
         migrationId: f.id,
         checksum: f.checksum,
-        appliedBy: `${os.userInfo().username}@${os.hostname()}`,
+        appliedBy: opts.appliedBy ?? `${os.userInfo().username}@${os.hostname()}`,
       });
     }
     activeMigrationId = f.id;
