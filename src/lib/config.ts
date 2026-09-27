@@ -94,6 +94,7 @@ export function resolveStage(cfg: Config, stage: string): ResolvedStage {
     ledgerScope: cfg.ledger?.scope ?? cfg.appName,
     ledgerRegion,
     ledgerEndpoint,
+    ledgerCreate: cfg.ledger?.create ?? true,
   };
 }
 

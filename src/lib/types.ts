@@ -31,6 +31,11 @@ export type LedgerConfig = {
   region?: string;
   /** AWS endpoint override for the ledger client (ddb-local / testcontainers). */
   endpoint?: string;
+  /**
+   * Create the ledger table when it is missing. Defaults to true. With false, commands that need
+   * the table throw LedgerMissingError (code LEDGER_MISSING) and never call CreateTable.
+   */
+  create?: boolean;
 };
 
 export type Config = {
@@ -52,6 +57,8 @@ export type ResolvedStage = StageConfig & {
   ledgerScope: string;
   ledgerRegion: string;
   ledgerEndpoint?: string;
+  /** Resolved ledger.create. Undefined means true. */
+  ledgerCreate?: boolean;
 };
 
 export type LedgerStatus = 'completed' | 'in_progress' | 'interrupted' | 'failed';

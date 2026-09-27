@@ -13,7 +13,9 @@ import {
   QueryCommand,
   UpdateCommand,
 } from '@aws-sdk/lib-dynamodb';
-import type { LedgerEntry } from './types.js';
+import type { Clients } from './ddb.js';
+import { LedgerMissingError } from './errors.js';
+import type { LedgerEntry, ResolvedStage } from './types.js';
 
 export type LedgerOptions = {
   tableName: string;
@@ -21,6 +23,8 @@ export type LedgerOptions = {
   stage: string;
   accountId?: string;
   region?: string;
+  /** Create the table when missing. Defaults to true; false throws LedgerMissingError instead. */
+  create?: boolean;
 };
 
 export class Ledger {
@@ -45,6 +49,7 @@ export class Ledger {
     } catch (err) {
       if (!(err instanceof ResourceNotFoundException)) throw err;
     }
+    if (this.options.create === false) throw new LedgerMissingError(this.tableName);
     await this.raw.send(
       new CreateTableCommand({
         TableName: this.tableName,
@@ -248,6 +253,21 @@ export class Ledger {
   private key(migrationId: string): { pk: string; sk: string } {
     return { pk: this.pk, sk: ledgerSk(migrationId) };
   }
+}
+
+/** The ledger for a resolved stage, on the ledger client pair. */
+export function stageLedger(
+  sc: ResolvedStage,
+  clients: Pick<Clients, 'ledgerRaw' | 'ledgerDoc'>,
+): Ledger {
+  return new Ledger(clients.ledgerRaw, clients.ledgerDoc, {
+    tableName: sc.ledgerTable,
+    scope: sc.ledgerScope,
+    stage: sc.stage,
+    accountId: sc.accountId,
+    region: sc.region,
+    create: sc.ledgerCreate,
+  });
 }
 
 function isConditionalCheckFailed(err: unknown): boolean {

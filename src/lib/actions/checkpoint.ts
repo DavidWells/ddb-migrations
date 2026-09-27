@@ -1,6 +1,6 @@
 import { loadConfig, resolveStage } from '../config.js';
 import { createClients } from '../ddb.js';
-import { Ledger } from '../ledger.js';
+import { stageLedger, type Ledger } from '../ledger.js';
 
 export type CheckpointShowOptions = {
   stage: string;
@@ -52,14 +52,7 @@ export async function clearCheckpoint(
 async function ledgerFor(cwd: string | undefined, stage: string): Promise<Ledger> {
   const cfg = await loadConfig(cwd ?? process.cwd());
   const sc = resolveStage(cfg, stage);
-  const { ledgerRaw, ledgerDoc } = createClients(sc);
-  const ledger = new Ledger(ledgerRaw, ledgerDoc, {
-    tableName: sc.ledgerTable,
-    scope: sc.ledgerScope,
-    stage,
-    accountId: sc.accountId,
-    region: sc.region,
-  });
+  const ledger = stageLedger(sc, createClients(sc));
   await ledger.ensureExists();
   return ledger;
 }

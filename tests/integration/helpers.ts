@@ -45,4 +45,21 @@ export function removeDir(dir: string): void {
   rmSync(dir, { recursive: true, force: true });
 }
 
+export type RecordedCall = { command: string; table?: string };
+
+/** A real DDB Local client that records each command name and TableName it sends. */
+export function recordingClient(): { client: DynamoDBClient; calls: RecordedCall[] } {
+  const client = new DynamoDBClient({ region: REGION, endpoint: ENDPOINT });
+  const calls: RecordedCall[] = [];
+  client.middlewareStack.add(
+    (next, context) => async (args) => {
+      const input = args.input as { TableName?: string };
+      calls.push({ command: String(context.commandName), table: input.TableName });
+      return next(args);
+    },
+    { step: 'initialize', name: 'recordCalls' },
+  );
+  return { client, calls };
+}
+
 export const NOOP_MIGRATION = 'export async function up() {}\n';

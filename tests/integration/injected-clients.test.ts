@@ -1,6 +1,6 @@
 // Verifies options.clients: an injected ledger client receives every ledger command and
 // the injected app client receives every migration command, with no cross-over.
-import { CreateTableCommand, DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { CreateTableCommand } from '@aws-sdk/client-dynamodb';
 import { GetCommand } from '@aws-sdk/lib-dynamodb';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { plan, status, up, type Config } from '../../src/lib/index.js';
@@ -11,6 +11,7 @@ import {
   dropIfExists,
   makeMigrationsDir,
   raw,
+  recordingClient,
   removeDir,
   uniqueName,
 } from './helpers.js';
@@ -41,22 +42,6 @@ const config: Config = {
     },
   },
 };
-
-type Recorded = { command: string; table?: string };
-
-function recordingClient(): { client: DynamoDBClient; calls: Recorded[] } {
-  const client = new DynamoDBClient({ region: REGION, endpoint: ENDPOINT });
-  const calls: Recorded[] = [];
-  client.middlewareStack.add(
-    (next, context) => async (args) => {
-      const input = args.input as { TableName?: string };
-      calls.push({ command: String(context.commandName), table: input.TableName });
-      return next(args);
-    },
-    { step: 'initialize', name: 'recordCalls' },
-  );
-  return { client, calls };
-}
 
 let cwd: string;
 

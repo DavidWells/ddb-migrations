@@ -1,6 +1,6 @@
 import { loadConfig, resolveStage } from '../config.js';
 import { createClients } from '../ddb.js';
-import { Ledger } from '../ledger.js';
+import { stageLedger } from '../ledger.js';
 
 export type MarkInterruptedOptions = {
   stage: string;
@@ -20,14 +20,7 @@ export async function markInterrupted(
 ): Promise<MarkInterruptedResult> {
   const cfg = await loadConfig(opts.cwd ?? process.cwd());
   const sc = resolveStage(cfg, opts.stage);
-  const { ledgerRaw, ledgerDoc } = createClients(sc);
-  const ledger = new Ledger(ledgerRaw, ledgerDoc, {
-    tableName: sc.ledgerTable,
-    scope: sc.ledgerScope,
-    stage: opts.stage,
-    accountId: sc.accountId,
-    region: sc.region,
-  });
+  const ledger = stageLedger(sc, createClients(sc));
   await ledger.ensureExists();
   const marked = await ledger.markInterrupted(opts.migrationId, opts.message);
   return {

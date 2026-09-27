@@ -1,7 +1,7 @@
 import os from 'node:os';
 import { resolveConfig, resolveStage } from '../config.js';
 import { createClients, type InjectedClients } from '../ddb.js';
-import { Ledger } from '../ledger.js';
+import { stageLedger } from '../ledger.js';
 import { listMigrationFiles } from '../migrations.js';
 import { makeLogger } from '../logger.js';
 import { loadMigration, makeContext } from '../runner.js';
@@ -54,13 +54,7 @@ export async function up(opts: UpOptions): Promise<UpResult> {
   if (!opts.dryRun && opts.checkAccount !== false) {
     await assertConfiguredAccount(sc, opts.clients?.app ? clients.raw.config.credentials : undefined);
   }
-  const ledger = new Ledger(clients.ledgerRaw, clients.ledgerDoc, {
-    tableName: sc.ledgerTable,
-    scope: sc.ledgerScope,
-    stage: opts.stage,
-    accountId: sc.accountId,
-    region: sc.region,
-  });
+  const ledger = stageLedger(sc, clients);
   await ledger.ensureExists();
 
   const files = await listMigrationFiles(cfg, cwd);
