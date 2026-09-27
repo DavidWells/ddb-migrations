@@ -78,4 +78,20 @@ describe('ddb-migrate CLI', () => {
     expect(downHelp.stdout).toContain('--capacity');
     expect(downHelp.stdout).toContain('--no-sdk-stats');
   });
+
+  it('documents the lock flags on up', () => {
+    const upHelp = runCli(['up', '--help']);
+
+    expect(upHelp.status).toBe(0);
+    expect(upHelp.stdout).toContain('--lock-owner');
+    expect(upHelp.stdout).toContain('--lock-ttl');
+  });
+
+  it('refuses --lock-ttl without --lock-owner before loading config', () => {
+    const result = runCli(['up', '--stage', 'dev', '--lock-ttl', '60']);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/--lock-ttl requires --lock-owner/);
+  });
 });
+

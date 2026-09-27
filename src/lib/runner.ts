@@ -61,6 +61,8 @@ export type ContextOpts = {
   sdkStatsEnabled?: boolean;
   captureConsumedCapacity?: boolean;
   params?: Record<string, unknown>;
+  /** Runs before every ctx.checkpoint, dry-run included (e.g. a lock heartbeat). */
+  beforeCheckpoint?: () => Promise<void>;
 };
 
 export function makeContext(opts: ContextOpts): MigrationContext {
@@ -104,6 +106,7 @@ export function makeContext(opts: ContextOpts): MigrationContext {
     },
     sdkStats,
     checkpoint: async (value) => {
+      await opts.beforeCheckpoint?.();
       if (dryRun) {
         logger.debug(`(dry-run) skipping checkpoint write: ${JSON.stringify(value)}`);
         return;

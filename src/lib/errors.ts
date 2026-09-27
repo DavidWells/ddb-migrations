@@ -34,3 +34,51 @@ export class LedgerConflictError extends Error {
     this.name = 'LedgerConflictError';
   }
 }
+
+/** Another owner holds a live lease on the run lock. */
+export class LockHeldError extends Error {
+  readonly code = 'LOCK_HELD';
+
+  constructor(
+    readonly scope: string,
+    readonly stage: string,
+    readonly holder: string,
+    /** Epoch seconds when the holder's lease expires. */
+    readonly expiresAt: number,
+  ) {
+    super(
+      `Migration lock for scope '${scope}' stage '${stage}' is held by '${holder}' ` +
+        `until ${new Date(expiresAt * 1000).toISOString()}.`,
+    );
+    this.name = 'LockHeldError';
+  }
+}
+
+/** This owner no longer holds the run lock: it expired, was released, or was taken over. */
+export class LockLostError extends Error {
+  readonly code = 'LOCK_LOST';
+
+  constructor(
+    readonly scope: string,
+    readonly stage: string,
+    readonly owner: string,
+    /** Current holder, when there is one. */
+    readonly holder?: string,
+  ) {
+    super(
+      `Migration lock for scope '${scope}' stage '${stage}' is not held by '${owner}'` +
+        (holder && holder !== owner ? ` (holder: '${holder}').` : '.'),
+    );
+    this.name = 'LockLostError';
+  }
+}
+
+/** True for DynamoDB's ConditionalCheckFailedException, by class or by name. */
+export function isConditionalCheckFailed(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'name' in err &&
+    err.name === 'ConditionalCheckFailedException'
+  );
+}

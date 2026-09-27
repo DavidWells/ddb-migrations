@@ -1,7 +1,8 @@
 import os from 'node:os';
 import { resolveConfig, resolveStage } from '../config.js';
-import { createClients, type InjectedClients } from '../ddb.js';
-import { stageLedger } from '../ledger.js';
+import { createClients, type Clients, type InjectedClients } from '../ddb.js';
+import { stageLedger, type Ledger } from '../ledger.js';
+import { openRunLock, type RunLock, type RunLockInfo, type RunLockOptions } from '../lock.js';
 import { listMigrationFiles } from '../migrations.js';
 import { makeLogger } from '../logger.js';
 import { loadMigration, makeContext } from '../runner.js';
@@ -10,7 +11,7 @@ import {
   isMigrationInterruptedError,
 } from '../shutdown.js';
 import { assertConfiguredAccount } from '../aws-identity.js';
-import { LedgerConflictError } from '../errors.js';
+import { LedgerConflictError, LockLostError } from '../errors.js';
 import type { Config, MigrationProgressEvent } from '../types.js';
 import type { DdbSdkStatsSnapshot } from '../sdk-stats.js';
 
@@ -29,6 +30,12 @@ export type UpOptions = {
   appliedBy?: string;
   /** Run parameters exposed to migrations as a frozen shallow copy on ctx.params. */
   params?: Record<string, unknown>;
+  /**
+   * Lease lock for this scope+stage. Acquired before reading the ledger, heartbeated before each
+   * migration and on each ctx.checkpoint, released when up finishes. With `held: true` the caller
+   * already holds it: up only verifies ownership, never releases, and skips heartbeats in a dry-run.
+   */
+  lock?: RunLockOptions;
   /** Cooperative shutdown signal. The current migration can stop at a page boundary. */
   signal?: AbortSignal;
   /** Structured progress callback for long-running migrations. */
@@ -49,6 +56,8 @@ export type UpResult = {
   sdkStats?: { byMigration: Record<string, DdbSdkStatsSnapshot> };
   failed?: { id: string; message: string };
   interrupted?: { id?: string; message: string };
+  /** Present when options.lock was used. `released` is false when the lease was lost or held by the caller. */
+  lock?: RunLockInfo & { released: boolean };
 };
 
 export async function up(opts: UpOptions): Promise<UpResult> {
@@ -62,6 +71,40 @@ export async function up(opts: UpOptions): Promise<UpResult> {
   const ledger = stageLedger(sc, clients);
   await ledger.ensureExists();
 
+  const lock = opts.lock
+    ? await openRunLock({
+      ledgerClient: clients.ledgerDoc,
+      tableName: sc.ledgerTable,
+      scope: sc.ledgerScope,
+      stage: opts.stage,
+      lock: opts.lock,
+      dryRun: !!opts.dryRun,
+    })
+    : undefined;
+
+  let result: UpResult;
+  try {
+    result = await applyPending({ opts, cfg, cwd, clients, ledger, lock });
+  } catch (err) {
+    // The original error matters more than a failed release; the lease expires on its own.
+    await lock?.release().catch(() => false);
+    throw err;
+  }
+  if (!lock) return result;
+  const released = await lock.release();
+  return { ...result, lock: { ...lock.info, released } };
+}
+
+type ApplyPendingInput = {
+  opts: UpOptions;
+  cfg: Config;
+  cwd: string;
+  clients: Clients;
+  ledger: Ledger;
+  lock?: RunLock;
+};
+
+async function applyPending({ opts, cfg, cwd, clients, ledger, lock }: ApplyPendingInput): Promise<UpResult> {
   const files = await listMigrationFiles(cfg, cwd);
   const entries = await ledger.listAll();
   const entriesById = new Map(entries.map((e) => [e.migrationId, e]));
@@ -136,6 +179,7 @@ export async function up(opts: UpOptions): Promise<UpResult> {
     const mod = await loadMigration(f.fullPath);
     interruptMarkedFor = undefined;
     interruptMarkPromise = undefined;
+    await lock?.heartbeat();
     if (!opts.dryRun) {
       await ledger.markStart({
         migrationId: f.id,
@@ -158,6 +202,7 @@ export async function up(opts: UpOptions): Promise<UpResult> {
       sdkStatsEnabled: opts.sdkStatsEnabled,
       captureConsumedCapacity: opts.captureConsumedCapacity,
       params: opts.params,
+      beforeCheckpoint: lock?.heartbeat,
     });
     const start = Date.now();
     try {
@@ -170,8 +215,9 @@ export async function up(opts: UpOptions): Promise<UpResult> {
         log.warn(message);
         return { ...resultBase(), interrupted: { id: f.id, message } };
       }
-      // A conflict means another run owns the row now; leave it to that run.
-      if (!opts.dryRun && !(err instanceof LedgerConflictError)) await ledger.markFailed(f.id, message);
+      // A conflict or a lost lock means another run may own the row now; leave it to that run.
+      const superseded = err instanceof LedgerConflictError || err instanceof LockLostError;
+      if (!opts.dryRun && !superseded) await ledger.markFailed(f.id, message);
       log.error(`failed: ${message}`);
       return { ...resultBase(), failed: { id: f.id, message } };
     }

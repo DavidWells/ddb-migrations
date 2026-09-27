@@ -15,7 +15,7 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import { randomUUID } from 'node:crypto';
 import type { Clients } from './ddb.js';
-import { LedgerConflictError, LedgerMissingError } from './errors.js';
+import { LedgerConflictError, LedgerMissingError, isConditionalCheckFailed } from './errors.js';
 import type { LedgerEntry, ResolvedStage } from './types.js';
 
 export type LedgerOptions = {
@@ -336,15 +336,6 @@ export function stageLedger(
     region: sc.region,
     create: sc.ledgerCreate,
   });
-}
-
-function isConditionalCheckFailed(err: unknown): boolean {
-  return (
-    typeof err === 'object' &&
-    err !== null &&
-    'name' in err &&
-    err.name === 'ConditionalCheckFailedException'
-  );
 }
 
 export function ledgerPk(scope: string, stage: string): string {

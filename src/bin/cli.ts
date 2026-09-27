@@ -155,6 +155,8 @@ program
   .option('--force', 'Bypass prod-stage non-dry-run safety guard.', false)
   .option('--capacity', 'Request ReturnConsumedCapacity=TOTAL on supported migration app-table commands.', false)
   .option('--no-sdk-stats', 'Disable SDK call stats for this run.')
+  .option('--lock-owner <owner>', 'Take the stage run lock as this owner; refuse if another owner holds it.')
+  .option('--lock-ttl <seconds>', 'Lease length for --lock-owner, renewed on each migration and checkpoint. Default: 3600.', (v) => Number.parseInt(v, 10))
   .option('--json', 'Print JSON output.', false)
   .description('Apply pending migrations.')
   .action(async (opts: {
@@ -164,8 +166,11 @@ program
     force: boolean;
     capacity: boolean;
     sdkStats: boolean;
+    lockOwner?: string;
+    lockTtl?: number;
   } & JsonOption) => {
     requireForceForUp(opts.stage, opts.dryRun, opts.force);
+    if (opts.lockTtl !== undefined && !opts.lockOwner) throw new Error('--lock-ttl requires --lock-owner.');
     const progress = createProgressPrinter();
     const cwd = resolveCwd();
     const promise = up({
@@ -175,6 +180,7 @@ program
       dryRun: opts.dryRun,
       sdkStatsEnabled: opts.sdkStats,
       captureConsumedCapacity: opts.capacity,
+      lock: opts.lockOwner ? { owner: opts.lockOwner, ttlSeconds: opts.lockTtl ?? 3600 } : undefined,
       signal: shutdown.signal,
       onProgress: opts.json ? undefined : progress.print,
       onActiveMigration: opts.dryRun

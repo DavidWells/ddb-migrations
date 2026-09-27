@@ -46,7 +46,21 @@ export {
 export { init, type InitResult } from './actions/init.js';
 export { create } from './actions/create.js';
 export { VERSION } from './version.js';
-export { LedgerConflictError, LedgerMissingError } from './errors.js';
+export { LedgerConflictError, LedgerMissingError, LockHeldError, LockLostError } from './errors.js';
+export {
+  acquireLock,
+  heartbeatLock,
+  releaseLock,
+  assertLockHeld,
+  readLock,
+  lockKey,
+  type AcquireLockParams,
+  type AcquireLockResult,
+  type LockParams,
+  type LockRow,
+  type RunLockInfo,
+  type RunLockOptions,
+} from './lock.js';
 export {
   createDdbSdkStats,
   wrapCountingDdbClient,
