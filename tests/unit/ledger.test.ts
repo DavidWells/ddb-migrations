@@ -71,4 +71,44 @@ describe('Ledger', () => {
     });
     expect(input.ExpressionAttributeValues).toHaveProperty(':t');
   });
+
+  it('conditions writes after markStart on the run token it set', async () => {
+    const sent: UpdateCommand[] = [];
+    const ledger = new Ledger(
+      {} as DynamoDBClient,
+      { send: async (command: UpdateCommand) => sent.push(command) } as unknown as DynamoDBDocumentClient,
+      { tableName: 'migration-ledger', scope: 'app', stage: 'dev' },
+    );
+
+    await ledger.markStart({ migrationId: '2026-01-01_demo', checksum: 'abc123' });
+    await ledger.setCheckpoint('2026-01-01_demo', { page: 1 });
+    await ledger.markComplete('2026-01-01_demo', 10);
+    await ledger.markFailed('2026-01-01_demo', 'boom');
+    await ledger.markInterrupted('2026-01-01_demo', 'received SIGINT');
+
+    const [start, ...writes] = sent.map((command) => command.input);
+    expect(start?.UpdateExpression).toContain('runToken = :runToken');
+    const token = start?.ExpressionAttributeValues?.[':runToken'];
+    expect(typeof token).toBe('string');
+    expect(writes).toHaveLength(4);
+    for (const input of writes) {
+      expect(input.ConditionExpression).toContain('runToken = :runToken');
+      expect(input.ConditionExpression).toContain('#status <> :completed');
+      expect(input.ExpressionAttributeValues?.[':runToken']).toBe(token);
+    }
+  });
+
+  it('leaves writes unconditioned on a run token when this instance did not start the row', async () => {
+    const sent: UpdateCommand[] = [];
+    const ledger = new Ledger(
+      {} as DynamoDBClient,
+      { send: async (command: UpdateCommand) => sent.push(command) } as unknown as DynamoDBDocumentClient,
+      { tableName: 'migration-ledger', scope: 'app', stage: 'dev' },
+    );
+
+    await ledger.markInterrupted('2026-01-01_demo', 'forced shutdown');
+
+    expect(sent[0]?.input.ConditionExpression).not.toContain('runToken');
+  });
 });
+

@@ -13,8 +13,9 @@ import {
   QueryCommand,
   UpdateCommand,
 } from '@aws-sdk/lib-dynamodb';
+import { randomUUID } from 'node:crypto';
 import type { Clients } from './ddb.js';
-import { LedgerMissingError } from './errors.js';
+import { LedgerConflictError, LedgerMissingError } from './errors.js';
 import type { LedgerEntry, ResolvedStage } from './types.js';
 
 export type LedgerOptions = {
@@ -29,6 +30,8 @@ export type LedgerOptions = {
 
 export class Ledger {
   private readonly pk: string;
+  /** Run token per migration this instance started; later writes are conditioned on it. */
+  private readonly runTokens = new Map<string, string>();
 
   constructor(
     private readonly raw: DynamoDBClient,
@@ -108,9 +111,12 @@ export class Ledger {
       'checksum = :checksum',
       'appliedAt = :appliedAt',
       '#status = :status',
+      'runToken = :runToken',
     ];
     const removeClauses = ['errorMessage', 'interruptedAt', 'durationMs', 'itemsProcessed'];
+    const runToken = randomUUID();
     const values: Record<string, unknown> = {
+      ':runToken': runToken,
       ':scope': this.options.scope,
       ':stage': this.options.stage,
       ':migrationId': entry.migrationId,
@@ -139,23 +145,26 @@ export class Ledger {
       removeClauses.push('#region');
     }
 
-    await this.doc.send(
-      new UpdateCommand({
-        TableName: this.tableName,
-        Key: this.key(entry.migrationId),
-        UpdateExpression: `SET ${setClauses.join(', ')} REMOVE ${removeClauses.join(', ')}`,
-        // Allow overwrite if previous run was failed/in_progress; refuse if already completed.
-        ConditionExpression:
-          '(attribute_not_exists(pk) AND attribute_not_exists(sk)) OR #status <> :completed',
-        ExpressionAttributeNames: {
-          '#scope': 'scope',
-          '#stage': 'stage',
-          '#status': 'status',
-          '#region': 'region',
-        },
-        ExpressionAttributeValues: values,
-      }),
+    await this.conditionalWrite(entry.migrationId, 'markStart', () =>
+      this.doc.send(
+        new UpdateCommand({
+          TableName: this.tableName,
+          Key: this.key(entry.migrationId),
+          UpdateExpression: `SET ${setClauses.join(', ')} REMOVE ${removeClauses.join(', ')}`,
+          // Allow overwrite if previous run was failed/in_progress; refuse if already completed.
+          ConditionExpression:
+            '(attribute_not_exists(pk) AND attribute_not_exists(sk)) OR #status <> :completed',
+          ExpressionAttributeNames: {
+            '#scope': 'scope',
+            '#stage': 'stage',
+            '#status': 'status',
+            '#region': 'region',
+          },
+          ExpressionAttributeValues: values,
+        }),
+      ),
     );
+    this.runTokens.set(entry.migrationId, runToken);
   }
 
   async markComplete(
@@ -166,30 +175,44 @@ export class Ledger {
     const itemsClause = itemsProcessed === undefined ? '' : ', itemsProcessed = :i';
     const values: Record<string, unknown> = { ':s': 'completed', ':d': durationMs };
     if (itemsProcessed !== undefined) values[':i'] = itemsProcessed;
-    await this.doc.send(
-      new UpdateCommand({
-        TableName: this.tableName,
-        Key: this.key(migrationId),
-        UpdateExpression: `SET #status = :s, durationMs = :d${itemsClause} REMOVE errorMessage, interruptedAt`,
-        ExpressionAttributeNames: { '#status': 'status' },
-        ExpressionAttributeValues: values,
-      }),
+    await this.conditionalWrite(migrationId, 'markComplete', () =>
+      this.doc.send(
+        new UpdateCommand({
+          TableName: this.tableName,
+          Key: this.key(migrationId),
+          UpdateExpression: `SET #status = :s, durationMs = :d${itemsClause} REMOVE errorMessage, interruptedAt`,
+          ...this.runCondition(migrationId, { '#status': 'status' }, values),
+        }),
+      ),
     );
   }
 
   async markFailed(migrationId: string, errorMessage: string): Promise<void> {
-    await this.doc.send(
-      new UpdateCommand({
-        TableName: this.tableName,
-        Key: this.key(migrationId),
-        UpdateExpression: 'SET #status = :s, errorMessage = :e REMOVE interruptedAt',
-        ExpressionAttributeNames: { '#status': 'status' },
-        ExpressionAttributeValues: { ':s': 'failed', ':e': errorMessage },
-      }),
+    await this.conditionalWrite(migrationId, 'markFailed', () =>
+      this.doc.send(
+        new UpdateCommand({
+          TableName: this.tableName,
+          Key: this.key(migrationId),
+          UpdateExpression: 'SET #status = :s, errorMessage = :e REMOVE interruptedAt',
+          ...this.runCondition(
+            migrationId,
+            { '#status': 'status' },
+            { ':s': 'failed', ':e': errorMessage },
+          ),
+        }),
+      ),
     );
   }
 
   async markInterrupted(migrationId: string, message: string): Promise<boolean> {
+    const runToken = this.runTokens.get(migrationId);
+    const values: Record<string, unknown> = {
+      ':s': 'interrupted' satisfies LedgerEntry['status'],
+      ':e': message,
+      ':t': new Date().toISOString(),
+      ':completed': 'completed' satisfies LedgerEntry['status'],
+    };
+    if (runToken !== undefined) values[':runToken'] = runToken;
     try {
       await this.doc.send(
         new UpdateCommand({
@@ -197,14 +220,10 @@ export class Ledger {
           Key: this.key(migrationId),
           UpdateExpression: 'SET #status = :s, errorMessage = :e, interruptedAt = :t',
           ConditionExpression:
-            'attribute_exists(pk) AND attribute_exists(sk) AND #status <> :completed',
+            'attribute_exists(pk) AND attribute_exists(sk) AND #status <> :completed' +
+            (runToken !== undefined ? ' AND runToken = :runToken' : ''),
           ExpressionAttributeNames: { '#status': 'status' },
-          ExpressionAttributeValues: {
-            ':s': 'interrupted' satisfies LedgerEntry['status'],
-            ':e': message,
-            ':t': new Date().toISOString(),
-            ':completed': 'completed' satisfies LedgerEntry['status'],
-          },
+          ExpressionAttributeValues: values,
         }),
       );
       return true;
@@ -223,13 +242,15 @@ export class Ledger {
   }
 
   async setCheckpoint(migrationId: string, value: Record<string, unknown>): Promise<void> {
-    await this.doc.send(
-      new UpdateCommand({
-        TableName: this.tableName,
-        Key: this.key(migrationId),
-        UpdateExpression: 'SET checkpoint = :v',
-        ExpressionAttributeValues: { ':v': value },
-      }),
+    await this.conditionalWrite(migrationId, 'setCheckpoint', () =>
+      this.doc.send(
+        new UpdateCommand({
+          TableName: this.tableName,
+          Key: this.key(migrationId),
+          UpdateExpression: 'SET checkpoint = :v',
+          ...this.runCondition(migrationId, {}, { ':v': value }),
+        }),
+      ),
     );
   }
 
@@ -252,6 +273,53 @@ export class Ledger {
 
   private key(migrationId: string): { pk: string; sk: string } {
     return { pk: this.pk, sk: ledgerSk(migrationId) };
+  }
+
+  /**
+   * For a migration this instance started: condition the write on its run token and on the row
+   * not being completed. Otherwise the write is unconditioned.
+   */
+  private runCondition(
+    migrationId: string,
+    names: Record<string, string>,
+    values: Record<string, unknown>,
+  ): {
+    ConditionExpression?: string;
+    ExpressionAttributeNames?: Record<string, string>;
+    ExpressionAttributeValues: Record<string, unknown>;
+  } {
+    const runToken = this.runTokens.get(migrationId);
+    if (runToken === undefined) {
+      return {
+        ...(Object.keys(names).length > 0 ? { ExpressionAttributeNames: names } : {}),
+        ExpressionAttributeValues: values,
+      };
+    }
+    return {
+      ConditionExpression: 'runToken = :runToken AND #status <> :completed',
+      ExpressionAttributeNames: { ...names, '#status': 'status' },
+      ExpressionAttributeValues: {
+        ...values,
+        ':runToken': runToken,
+        ':completed': 'completed' satisfies LedgerEntry['status'],
+      },
+    };
+  }
+
+  /** Runs a conditioned write, turning a failed condition into LedgerConflictError. */
+  private async conditionalWrite(
+    migrationId: string,
+    operation: string,
+    write: () => Promise<unknown>,
+  ): Promise<void> {
+    try {
+      await write();
+    } catch (err) {
+      if (err instanceof ConditionalCheckFailedException || isConditionalCheckFailed(err)) {
+        throw new LedgerConflictError(migrationId, operation, { cause: err });
+      }
+      throw err;
+    }
   }
 }
 

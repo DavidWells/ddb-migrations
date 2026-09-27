@@ -13,3 +13,24 @@ export class LedgerMissingError extends Error {
     this.name = 'LedgerMissingError';
   }
 }
+
+/**
+ * A ledger write lost a race: the row was completed, or another run started it after this one.
+ * Completed rows are never rewritten.
+ */
+export class LedgerConflictError extends Error {
+  readonly code = 'LEDGER_CONFLICT';
+
+  constructor(
+    readonly migrationId: string,
+    readonly operation: string,
+    options?: { cause?: unknown },
+  ) {
+    super(
+      `Ledger ${operation} for '${migrationId}' was rejected: the row is completed ` +
+        `or another run started it after this one.`,
+      options,
+    );
+    this.name = 'LedgerConflictError';
+  }
+}

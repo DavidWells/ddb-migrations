@@ -10,6 +10,7 @@ import {
   isMigrationInterruptedError,
 } from '../shutdown.js';
 import { assertConfiguredAccount } from '../aws-identity.js';
+import { LedgerConflictError } from '../errors.js';
 import type { Config, MigrationProgressEvent } from '../types.js';
 import type { DdbSdkStatsSnapshot } from '../sdk-stats.js';
 
@@ -169,7 +170,8 @@ export async function up(opts: UpOptions): Promise<UpResult> {
         log.warn(message);
         return { ...resultBase(), interrupted: { id: f.id, message } };
       }
-      if (!opts.dryRun) await ledger.markFailed(f.id, message);
+      // A conflict means another run owns the row now; leave it to that run.
+      if (!opts.dryRun && !(err instanceof LedgerConflictError)) await ledger.markFailed(f.id, message);
       log.error(`failed: ${message}`);
       return { ...resultBase(), failed: { id: f.id, message } };
     }
