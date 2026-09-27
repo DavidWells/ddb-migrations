@@ -46,7 +46,7 @@ describe('up interruption persistence', () => {
     const markFailed = vi.spyOn(Ledger.prototype, 'markFailed').mockResolvedValue();
     vi.spyOn(Ledger.prototype, 'ensureExists').mockResolvedValue();
     vi.spyOn(Ledger.prototype, 'listAll').mockResolvedValue([]);
-    vi.spyOn(Ledger.prototype, 'markStart').mockResolvedValue();
+    const markStart = vi.spyOn(Ledger.prototype, 'markStart').mockResolvedValue();
 
     const pending = up({
       cwd,
@@ -54,6 +54,8 @@ describe('up interruption persistence', () => {
       signal: controller.signal,
       checkAccount: false,
     });
+    // Abort only once the migration is running; a fixed delay races config/file loading.
+    await vi.waitFor(() => expect(markStart).toHaveBeenCalled());
     await new Promise((resolve) => setTimeout(resolve, 10));
     controller.abort('received SIGINT');
 
