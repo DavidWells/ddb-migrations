@@ -181,17 +181,18 @@ describe('up with a lock', () => {
     const cwd = project({
       [`${migrationId}.mjs`]: `
 export async function up(ctx) {
-  await new Promise((resolve) => setTimeout(resolve, 2100));
+  await new Promise((resolve) => setTimeout(resolve, 3500));
   await ctx.checkpoint({ page: 1 });
 }
 `,
     });
     const running = up({ stage: 'dev', cwd, config: config(appName), lock: { owner: 'slow-runner', ttlSeconds: 1 } });
-    // Wait until the slow run's lease has expired, then take it over.
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    // Expiry has one-second resolution, so the 1s lease is free to take within ~2s; the
+    // migration checkpoints at 3.5s, well after the takeover.
+    await new Promise((resolve) => setTimeout(resolve, 1000));
     await vi.waitFor(
       () => acquireLock({ ...params(appName, 'rescue-runner'), ttlSeconds: 60 }),
-      { timeout: 3000, interval: 200 },
+      { timeout: 2400, interval: 100 },
     );
 
     const result = await running;
