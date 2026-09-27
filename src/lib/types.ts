@@ -124,6 +124,8 @@ export type MigrationContext = {
   stage: string;
   /** True for `--dry-run`. Migrations should branch on this to skip side effects. */
   dryRun: boolean;
+  /** Caller-supplied run parameters (`up({ params })`). A frozen shallow copy; empty when unset. */
+  params: Readonly<Record<string, unknown>>;
   /** Prefer this over console.log; output is prefixed with the migration id. */
   logger: Logger;
   /** Aborted when the operator requests shutdown, e.g. first Ctrl-C in the CLI. */

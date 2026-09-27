@@ -26,6 +26,8 @@ export type UpOptions = {
   clients?: InjectedClients;
   /** Identity recorded as appliedBy on ledger rows. Defaults to user@host. */
   appliedBy?: string;
+  /** Run parameters exposed to migrations as a frozen shallow copy on ctx.params. */
+  params?: Record<string, unknown>;
   /** Cooperative shutdown signal. The current migration can stop at a page boundary. */
   signal?: AbortSignal;
   /** Structured progress callback for long-running migrations. */
@@ -154,6 +156,7 @@ export async function up(opts: UpOptions): Promise<UpResult> {
       onProgress: opts.onProgress,
       sdkStatsEnabled: opts.sdkStatsEnabled,
       captureConsumedCapacity: opts.captureConsumedCapacity,
+      params: opts.params,
     });
     const start = Date.now();
     try {

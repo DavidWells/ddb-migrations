@@ -88,3 +88,30 @@ describe('makeContext SDK stats integration', () => {
     expect(events[0]?.sdk).toBeUndefined();
   });
 });
+
+describe('makeContext params', () => {
+  const base = {
+    cfg: cfg(),
+    stage: 'dev',
+    migrationId: '2026-01-01_demo',
+    logger: { info() {}, warn() {}, error() {}, debug() {} },
+    dryRun: false,
+  };
+
+  it('exposes a frozen shallow copy of the passed params', () => {
+    const params = { tenant: 't1', nested: { a: 1 } };
+    const ctx = makeContext({ ...base, ledger: ledger(), clients: clients(), params });
+
+    expect(ctx.params).toEqual(params);
+    expect(ctx.params).not.toBe(params);
+    expect(Object.isFrozen(ctx.params)).toBe(true);
+    params.tenant = 'changed';
+    expect(ctx.params.tenant).toBe('t1');
+  });
+
+  it('defaults to an empty frozen object', () => {
+    const ctx = makeContext({ ...base, ledger: ledger(), clients: clients() });
+    expect(ctx.params).toEqual({});
+    expect(Object.isFrozen(ctx.params)).toBe(true);
+  });
+});

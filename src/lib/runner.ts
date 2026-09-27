@@ -60,6 +60,7 @@ export type ContextOpts = {
   onProgress?: (event: MigrationProgressEvent) => void;
   sdkStatsEnabled?: boolean;
   captureConsumedCapacity?: boolean;
+  params?: Record<string, unknown>;
 };
 
 export function makeContext(opts: ContextOpts): MigrationContext {
@@ -90,6 +91,7 @@ export function makeContext(opts: ContextOpts): MigrationContext {
     tableName: (logical) => resolveTableName(cfg, stage, logical),
     stage,
     dryRun,
+    params: Object.freeze({ ...opts.params }),
     logger,
     signal: shutdown.signal,
     shouldStop: () => shutdown.isRequested(),
