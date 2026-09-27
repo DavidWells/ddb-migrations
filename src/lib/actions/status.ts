@@ -1,5 +1,5 @@
 import { resolveConfig, resolveStage } from '../config.js';
-import { createClients } from '../ddb.js';
+import { createClients, type InjectedClients } from '../ddb.js';
 import { Ledger } from '../ledger.js';
 import { listMigrationFiles } from '../migrations.js';
 import type { Config, LedgerStatus } from '../types.js';
@@ -17,13 +17,15 @@ export type StatusOptions = {
   cwd?: string;
   /** Config object used instead of the cwd config file. `cwd` still sets the base for migrationsDir. */
   config?: Config;
+  /** Caller-built ledger client that replaces the default-chain one. */
+  clients?: InjectedClients;
 };
 
 export async function status(opts: StatusOptions): Promise<StatusItem[]> {
   const cwd = opts.cwd ?? process.cwd();
   const cfg = await resolveConfig(cwd, opts.config);
   const sc = resolveStage(cfg, opts.stage);
-  const { ledgerRaw, ledgerDoc } = createClients(sc);
+  const { ledgerRaw, ledgerDoc } = createClients(sc, opts.clients);
   const ledger = new Ledger(ledgerRaw, ledgerDoc, {
     tableName: sc.ledgerTable,
     scope: sc.ledgerScope,

@@ -1,6 +1,6 @@
 import os from 'node:os';
 import { resolveConfig, resolveStage } from '../config.js';
-import { createClients } from '../ddb.js';
+import { createClients, type InjectedClients } from '../ddb.js';
 import { Ledger } from '../ledger.js';
 import { listMigrationFiles } from '../migrations.js';
 import { makeLogger } from '../logger.js';
@@ -22,6 +22,8 @@ export type UpOptions = {
   cwd?: string;
   /** Config object used instead of the cwd config file. `cwd` still sets the base for migrationsDir. */
   config?: Config;
+  /** Caller-built app/ledger clients that replace the default-chain ones. */
+  clients?: InjectedClients;
   /** Cooperative shutdown signal. The current migration can stop at a page boundary. */
   signal?: AbortSignal;
   /** Structured progress callback for long-running migrations. */
@@ -48,8 +50,10 @@ export async function up(opts: UpOptions): Promise<UpResult> {
   const cwd = opts.cwd ?? process.cwd();
   const cfg = await resolveConfig(cwd, opts.config);
   const sc = resolveStage(cfg, opts.stage);
-  if (!opts.dryRun && opts.checkAccount !== false) await assertConfiguredAccount(sc);
-  const clients = createClients(sc);
+  const clients = createClients(sc, opts.clients);
+  if (!opts.dryRun && opts.checkAccount !== false) {
+    await assertConfiguredAccount(sc, opts.clients?.app ? clients.raw.config.credentials : undefined);
+  }
   const ledger = new Ledger(clients.ledgerRaw, clients.ledgerDoc, {
     tableName: sc.ledgerTable,
     scope: sc.ledgerScope,

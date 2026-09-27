@@ -1,3 +1,4 @@
+import type { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { GetCallerIdentityCommand, STSClient } from '@aws-sdk/client-sts';
 import type { ResolvedStage } from './types.js';
 
@@ -7,8 +8,21 @@ export type AwsCallerIdentity = {
   userId?: string;
 };
 
-export async function getCallerIdentity(stage: ResolvedStage): Promise<AwsCallerIdentity> {
-  const client = new STSClient({ region: stage.region });
+/** Credentials of an existing SDK client, e.g. an injected app client. */
+export type ClientCredentials = DynamoDBClient['config']['credentials'];
+
+/** STS client for the stage region. Uses the given credentials, else the default chain. */
+export function stsClientFor(stage: ResolvedStage, credentials?: ClientCredentials): STSClient {
+  return credentials
+    ? new STSClient({ region: stage.region, credentials })
+    : new STSClient({ region: stage.region });
+}
+
+export async function getCallerIdentity(
+  stage: ResolvedStage,
+  credentials?: ClientCredentials,
+): Promise<AwsCallerIdentity> {
+  const client = stsClientFor(stage, credentials);
   const result = await client.send(new GetCallerIdentityCommand({}));
   return {
     account: result.Account,
@@ -17,9 +31,12 @@ export async function getCallerIdentity(stage: ResolvedStage): Promise<AwsCaller
   };
 }
 
-export async function assertConfiguredAccount(stage: ResolvedStage): Promise<void> {
+export async function assertConfiguredAccount(
+  stage: ResolvedStage,
+  credentials?: ClientCredentials,
+): Promise<void> {
   if (!stage.accountId || stage.endpoint) return;
-  const identity = await getCallerIdentity(stage);
+  const identity = await getCallerIdentity(stage, credentials);
   if (identity.account !== stage.accountId) {
     throw new Error(
       `AWS account mismatch for stage '${stage.stage}'. ` +

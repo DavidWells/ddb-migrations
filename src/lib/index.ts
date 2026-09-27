@@ -24,6 +24,7 @@ export {
   resolveTableName,
   INLINE_CONFIG_PATH,
 } from './config.js';
+export { createClients, type Clients, type ClientPair, type InjectedClients } from './ddb.js';
 export { up, type UpOptions, type UpResult } from './actions/up.js';
 export { down, type DownOptions, type DownResult } from './actions/down.js';
 export { status, type StatusItem, type StatusOptions } from './actions/status.js';

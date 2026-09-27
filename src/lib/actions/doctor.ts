@@ -3,7 +3,7 @@ import path from 'node:path';
 import { DescribeTableCommand, ResourceNotFoundException } from '@aws-sdk/client-dynamodb';
 import { INLINE_CONFIG_PATH, findConfig, resolveConfig, resolveStage } from '../config.js';
 import type { Config } from '../types.js';
-import { createClients } from '../ddb.js';
+import { createClients, type InjectedClients } from '../ddb.js';
 import { getCallerIdentity, type AwsCallerIdentity } from '../aws-identity.js';
 import { plan } from './plan.js';
 
@@ -31,6 +31,8 @@ export type DoctorOptions = {
   cwd?: string;
   /** Config object used instead of the cwd config file. `cwd` still sets the base for migrationsDir. */
   config?: Config;
+  /** Caller-built app/ledger clients. The identity check uses the app client's credentials. */
+  clients?: InjectedClients;
 };
 
 export async function doctor(opts: DoctorOptions): Promise<DoctorResult> {
@@ -76,7 +78,7 @@ export async function doctor(opts: DoctorOptions): Promise<DoctorResult> {
     checks.push(fail('migrations-dir', `missing ${cfg.migrationsDir}`));
   }
 
-  const clients = createClients(sc);
+  const clients = createClients(sc, opts.clients);
   try {
     await clients.ledgerRaw.send(new DescribeTableCommand({ TableName: sc.ledgerTable }));
     checks.push(pass('ledger-table', `reachable ${sc.ledgerTable}`));
@@ -92,7 +94,10 @@ export async function doctor(opts: DoctorOptions): Promise<DoctorResult> {
     checks.push(skip('aws-identity', 'skipped for endpoint-backed stage'));
   } else {
     try {
-      callerIdentity = await getCallerIdentity(sc);
+      callerIdentity = await getCallerIdentity(
+        sc,
+        opts.clients?.app ? clients.raw.config.credentials : undefined,
+      );
       if (sc.accountId && callerIdentity.account !== sc.accountId) {
         checks.push(
           fail(
@@ -111,7 +116,7 @@ export async function doctor(opts: DoctorOptions): Promise<DoctorResult> {
   }
 
   try {
-    const result = await plan({ stage: opts.stage, cwd, config: opts.config });
+    const result = await plan({ stage: opts.stage, cwd, config: opts.config, clients: opts.clients });
     if (result.drifted.length > 0) checks.push(fail('drift', `${result.drifted.length} drifted migration(s)`));
     else checks.push(pass('drift', 'no checksum drift detected'));
 

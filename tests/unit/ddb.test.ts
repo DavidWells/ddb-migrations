@@ -1,3 +1,5 @@
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { describe, expect, it } from 'vitest';
 import { createClients } from '../../src/lib/ddb.js';
 import type { ResolvedStage } from '../../src/lib/types.js';
@@ -53,5 +55,34 @@ describe('createClients', () => {
     const ledgerRegion = await ledgerRaw.config.region();
     expect(appRegion).toBe('us-west-2');
     expect(ledgerRegion).toBe('eu-west-1');
+  });
+
+  it('uses injected app and ledger clients and derives missing document clients', () => {
+    const appRaw = new DynamoDBClient({ region: 'us-east-1' });
+    const ledgerRaw = new DynamoDBClient({ region: 'us-east-1' });
+    const ledgerDoc = DynamoDBDocumentClient.from(ledgerRaw);
+    const clients = createClients(stage(), {
+      app: { raw: appRaw },
+      ledger: { raw: ledgerRaw, doc: ledgerDoc },
+    });
+    expect(clients.raw).toBe(appRaw);
+    expect(clients.doc).toBeInstanceOf(DynamoDBDocumentClient);
+    expect(clients.ledgerRaw).toBe(ledgerRaw);
+    expect(clients.ledgerDoc).toBe(ledgerDoc);
+  });
+
+  it('builds a default-chain ledger client when only the app client is injected', async () => {
+    const appRaw = new DynamoDBClient({ region: 'us-east-1' });
+    const clients = createClients(stage(), { app: { raw: appRaw } });
+    expect(clients.raw).toBe(appRaw);
+    expect(clients.ledgerRaw).not.toBe(appRaw);
+    expect(await clients.ledgerRaw.config.region()).toBe('us-east-1');
+  });
+
+  it('builds a default-chain app client when only the ledger client is injected', () => {
+    const ledgerRaw = new DynamoDBClient({ region: 'us-east-1' });
+    const clients = createClients(stage(), { ledger: { raw: ledgerRaw } });
+    expect(clients.ledgerRaw).toBe(ledgerRaw);
+    expect(clients.raw).not.toBe(ledgerRaw);
   });
 });
