@@ -22,10 +22,11 @@ Use `ddb-migration-tools` for TypeScript DynamoDB schema/data migrations that ne
    ```bash
    npx ddb-migrate init
    ```
-4. Prefer directory migrations for non-trivial work:
+4. Prefer directory migrations for non-trivial work (directory checksums cover every non-hidden file, so fixtures/helpers are drift-protected too):
    ```bash
    npx ddb-migrate create "seed counter metadata"
    ```
+5. Use `-C <path>` (or `DDB_MIGRATE_CWD`) when running outside the project directory; `ddb-migrate current` confirms the resolved cwd, config, and version.
 
 ## Configuration Pattern
 
@@ -80,7 +81,7 @@ export async function up(ctx: MigrationContext): Promise<void> {
 
 Use `ctx.ddb` for item operations and `ctx.ddbRaw` for table-level operations such as GSI changes. Resolve all table names through `ctx.tableName(logical)`.
 
-For long migrations, `ctx.sdkStats.snapshot()` reports observed app-table DynamoDB `send()` calls, reads/writes, pages, returned items, failures, throttles, and optional consumed capacity. These are top-level SDK calls, not internal retry attempts, and do not include ledger/checkpoint writes.
+For long migrations, `ctx.sdkStats.snapshot()` reports observed app-table DynamoDB `send()` calls, reads/writes, pages, returned items, failures, throttles, and optional consumed capacity. These are top-level SDK calls, not internal retry attempts, and do not include ledger/checkpoint writes. SDK stat collection is on by default; disable per-run with `--no-sdk-stats` or globally via `observability.sdkStatsEnabled: false`. Use `--capacity` (or `observability.captureConsumedCapacity: true`) to request `ReturnConsumedCapacity=TOTAL`.
 
 Honor dry-run explicitly:
 
@@ -98,6 +99,20 @@ const checkpoint = await ctx.getCheckpoint<{ lastKey?: Record<string, unknown> }
 await ctx.checkpoint({ lastKey: page.LastEvaluatedKey });
 ```
 
+For cooperative Ctrl-C handling, call `ctx.throwIfStopped()` at page/batch boundaries. The CLI translates the first SIGINT/SIGTERM/SIGQUIT into `ctx.signal.abort()`; a `MigrationInterruptedError` leaves the ledger row in `interrupted` status (a later `up` retries it). A second signal forces exit (130) and the CLI persists the interrupted status synchronously.
+
+Emit structured progress for long migrations so the CLI can render counters, throughput, and SDK stats:
+
+```ts
+ctx.progress({
+  phase: 'apply',
+  operation: 'update',
+  table: Users,
+  scanned, updated, remaining,
+  sdk: ctx.sdkStats.snapshot(),
+});
+```
+
 ## Safety Rules
 
 - Make migrations idempotent. Use conditional writes or filters so reruns do not corrupt data.
@@ -106,15 +121,20 @@ await ctx.checkpoint({ lastKey: page.LastEvaluatedKey });
 - Prefer forward-only repair migrations over mutating old migration files.
 - Avoid DynamoDB scans unless the migration is explicitly a controlled backfill. For scans, page results, checkpoint, and consider segmented scans.
 - Do not print secrets or full customer records in migration logs.
-- Check production credentials/profile selection before running `up --stage prod`.
+- Check production credentials/profile selection before running `up --stage prod`. Non-dry-run `up` on prod-like stages (stage name contains `prod`) requires `--force`. Non-dry-run `down` always requires `--force` regardless of stage.
+- An `interrupted` or `in_progress` row from a prior crash will be retried on the next `up`; design migrations so a half-finished run can resume safely (use `getCheckpoint()` + conditional writes).
+- An `orphan` row (ledger entry whose file is gone) blocks no operations directly but signals that someone deleted an applied migration — investigate before continuing.
 
 ## Runbook
 
-Before applying:
+Pre-flight (preferred order — `plan` does not import or execute migration code, unlike `up --dry-run`):
 
 ```bash
-npx ddb-migrate status --stage staging
-npx ddb-migrate up --stage staging --dry-run
+npx ddb-migrate current                           # confirm cwd / config / version
+npx ddb-migrate doctor --stage staging            # config + ledger + AWS identity + migration health
+npx ddb-migrate plan   --stage staging            # what would run, with reasons, no code import
+npx ddb-migrate status --stage staging            # current ledger view
+npx ddb-migrate up     --stage staging --dry-run  # full code path with dryRun=true; ledger untouched
 ```
 
 Apply:
@@ -124,6 +144,13 @@ npx ddb-migrate up --stage staging
 npx ddb-migrate status --stage staging
 ```
 
+Prod-like stages (`prod` in the name) require `--force` for non-dry-run apply:
+
+```bash
+npx ddb-migrate up --stage prod --dry-run
+npx ddb-migrate up --stage prod --force
+```
+
 Use SDK observability flags when diagnosing long backfills:
 
 ```bash
@@ -131,14 +158,23 @@ npx ddb-migrate up --stage staging --capacity      # request consumed capacity i
 npx ddb-migrate up --stage staging --no-sdk-stats  # disable SDK stats for this run
 ```
 
-Rollback only when `down()` is intentionally implemented and safe:
+Rollback always requires `--force` for the non-dry-run step, and only when `down()` is intentionally implemented and safe:
 
 ```bash
 npx ddb-migrate down --stage staging --shift 1 --dry-run
-npx ddb-migrate down --stage staging --shift 1
+npx ddb-migrate down --stage staging --shift 1 --force
 ```
 
-Use `--to <migrationId>` to stop at a specific migration during staged rollout. Use `--shift N` to roll back the newest `N` completed migrations.
+Use `--to <migrationId>` on `up` (or `plan`) to stop at a specific migration during staged rollout. Use `--shift N` on `down` to roll back the newest `N` completed migrations (`--shift 0` rolls back everything).
+
+Inspect or clear a resume checkpoint for an interrupted migration:
+
+```bash
+npx ddb-migrate checkpoint show  <migrationId> --stage staging
+npx ddb-migrate checkpoint clear <migrationId> --stage staging --force
+```
+
+Add `--json` to any read-style command (`status`, `plan`, `doctor`, `current`, `checkpoint show`) for CI/agent consumption. `up --json` / `down --json` print the final result as JSON and suppress progress events. Exit codes: `0` success, `1` failure, `130` interrupted by signal.
 
 ## Ledger Stack
 
