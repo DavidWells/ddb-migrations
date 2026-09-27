@@ -77,6 +77,8 @@ export type ContextOpts = {
   params?: Record<string, unknown>;
   /** Runs before every ctx.checkpoint, dry-run included (e.g. a lock heartbeat). */
   beforeCheckpoint?: () => Promise<void>;
+  /** Runs after every ctx.checkpoint: after the ledger write, or after skipping it in a dry-run. */
+  afterCheckpoint?: (value: Record<string, unknown>) => void;
 };
 
 export function makeContext(opts: ContextOpts): MigrationContext {
@@ -123,9 +125,10 @@ export function makeContext(opts: ContextOpts): MigrationContext {
       await opts.beforeCheckpoint?.();
       if (dryRun) {
         logger.debug(`(dry-run) skipping checkpoint write: ${JSON.stringify(value)}`);
-        return;
+      } else {
+        await ledger.setCheckpoint(migrationId, value);
       }
-      await ledger.setCheckpoint(migrationId, value);
+      opts.afterCheckpoint?.(value);
     },
     getCheckpoint: async () => ledger.getCheckpoint(migrationId),
   };

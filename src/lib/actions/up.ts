@@ -42,6 +42,8 @@ export type UpOptions = {
   signal?: AbortSignal;
   /** Structured progress callback for long-running migrations. */
   onProgress?: (event: MigrationProgressEvent) => void;
+  /** Lifecycle events for each migration: start, progress, checkpoint, complete, fail, interrupt. */
+  onEvent?: (event: UpEvent) => void;
   /** Notifies the caller when the active migration changes. Intended for CLI shutdown fallback. */
   onActiveMigration?: (migrationId: string | undefined) => void;
   /** Validate configured accountId before non-dry-run writes. */
@@ -52,9 +54,37 @@ export type UpOptions = {
   captureConsumedCapacity?: boolean;
 };
 
+export type UpMigrationStatus = 'completed' | 'dry-run' | 'failed' | 'interrupted';
+
+/** One migration this run executed. */
+export type UpMigrationResult = {
+  id: string;
+  checksum: string;
+  status: UpMigrationStatus;
+  durationMs: number;
+  /** Per-migration SDK stats, when SDK stats are enabled. */
+  sdkStats?: DdbSdkStatsSnapshot;
+  /** The last ctx.progress event, when the migration emitted any. */
+  progress?: MigrationProgressEvent;
+  /** Error message for failed and interrupted migrations. */
+  error?: string;
+};
+
+export type UpEvent =
+  | { type: 'start'; id: string; checksum: string; dryRun: boolean }
+  | { type: 'progress'; id: string; progress: MigrationProgressEvent }
+  | { type: 'checkpoint'; id: string; checkpoint: Record<string, unknown> }
+  | { type: 'complete'; id: string; status: 'completed' | 'dry-run'; durationMs: number }
+  | { type: 'fail'; id: string; error: string; durationMs: number }
+  | { type: 'interrupt'; id: string; error: string; durationMs: number };
+
 export type UpResult = {
   applied: string[];
   skipped: string[];
+  /** Every migration this run executed, in order, with its outcome. */
+  results: UpMigrationResult[];
+  /** Ids still not completed after this run, in lexical order. A dry-run completes nothing. */
+  pending: string[];
   sdkStats?: { byMigration: Record<string, DdbSdkStatsSnapshot> };
   failed?: { id: string; message: string };
   interrupted?: { id?: string; message: string };
@@ -150,11 +180,44 @@ async function applyPending({ opts, cfg, cwd, clients, ledger, lock }: ApplyPend
   const skipped: string[] = pending.filter((p) => !slice.includes(p)).map((p) => p.id);
   const sdkStatsEnabled = opts.sdkStatsEnabled ?? cfg.observability?.sdkStatsEnabled ?? true;
   const sdkStatsByMigration: Record<string, DdbSdkStatsSnapshot> = {};
-  const resultBase = (): Pick<UpResult, 'applied' | 'skipped' | 'sdkStats'> => ({
+  const results: UpMigrationResult[] = [];
+  const lastProgress = new Map<string, MigrationProgressEvent>();
+  const resultBase = (): Pick<UpResult, 'applied' | 'skipped' | 'results' | 'pending' | 'sdkStats'> => ({
     applied,
     skipped,
+    results,
+    pending: pending
+      .map((p) => p.id)
+      .filter((id) => !(results.some((r) => r.id === id && r.status === 'completed'))),
     ...(sdkStatsEnabled ? { sdkStats: { byMigration: sdkStatsByMigration } } : {}),
   });
+  const record = (
+    f: { id: string; checksum: string },
+    status: UpMigrationStatus,
+    durationMs: number,
+    error?: string,
+  ): void => {
+    const progress = lastProgress.get(f.id);
+    results.push({
+      id: f.id,
+      checksum: f.checksum,
+      status,
+      durationMs,
+      ...(sdkStatsByMigration[f.id] ? { sdkStats: sdkStatsByMigration[f.id] } : {}),
+      ...(progress ? { progress } : {}),
+      ...(error !== undefined ? { error } : {}),
+    });
+    if (status === 'completed' || status === 'dry-run') {
+      opts.onEvent?.({ type: 'complete', id: f.id, status, durationMs });
+    } else {
+      opts.onEvent?.({
+        type: status === 'failed' ? 'fail' : 'interrupt',
+        id: f.id,
+        error: error ?? '',
+        durationMs,
+      });
+    }
+  };
   const shutdown = createMigrationShutdownController(opts.signal);
   let activeMigrationId: string | undefined;
   let interruptMarkedFor: string | undefined;
@@ -200,6 +263,7 @@ async function applyPending({ opts, cfg, cwd, clients, ledger, lock }: ApplyPend
     }
     activeMigrationId = f.id;
     opts.onActiveMigration?.(f.id);
+    opts.onEvent?.({ type: 'start', id: f.id, checksum: f.checksum, dryRun: !!opts.dryRun });
     const ctx = makeContext({
       cfg,
       stage: opts.stage,
@@ -209,11 +273,16 @@ async function applyPending({ opts, cfg, cwd, clients, ledger, lock }: ApplyPend
       logger: log,
       dryRun: !!opts.dryRun,
       shutdown,
-      onProgress: opts.onProgress,
+      onProgress: (event) => {
+        lastProgress.set(f.id, event);
+        opts.onEvent?.({ type: 'progress', id: f.id, progress: event });
+        opts.onProgress?.(event);
+      },
       sdkStatsEnabled: opts.sdkStatsEnabled,
       captureConsumedCapacity: opts.captureConsumedCapacity,
       params: opts.params,
       beforeCheckpoint: lock?.heartbeat,
+      afterCheckpoint: (checkpoint) => opts.onEvent?.({ type: 'checkpoint', id: f.id, checkpoint }),
     });
     const start = Date.now();
     try {
@@ -224,12 +293,14 @@ async function applyPending({ opts, cfg, cwd, clients, ledger, lock }: ApplyPend
       if (isMigrationInterruptedError(err)) {
         await markActiveInterrupted(message);
         log.warn(message);
+        record(f, 'interrupted', Date.now() - start, message);
         return { ...resultBase(), interrupted: { id: f.id, message } };
       }
       // A conflict or a lost lock means another run may own the row now; leave it to that run.
       const superseded = err instanceof LedgerConflictError || err instanceof LockLostError;
       if (!opts.dryRun && !superseded) await ledger.markFailed(f.id, message);
       log.error(`failed: ${message}`);
+      record(f, 'failed', Date.now() - start, message);
       return { ...resultBase(), failed: { id: f.id, message } };
     }
     const dur = Date.now() - start;
@@ -238,11 +309,13 @@ async function applyPending({ opts, cfg, cwd, clients, ledger, lock }: ApplyPend
       const message = shutdown.reason() ?? 'Shutdown requested after migration returned';
       await markActiveInterrupted(message);
       log.warn(message);
+      record(f, 'interrupted', dur, message);
       return { ...resultBase(), interrupted: { id: f.id, message } };
     }
     if (!opts.dryRun) await ledger.markComplete(f.id, dur);
     log.info(`done in ${dur}ms${opts.dryRun ? ' (dry-run)' : ''}`);
     applied.push(f.id);
+    record(f, opts.dryRun ? 'dry-run' : 'completed', dur);
     activeMigrationId = undefined;
     opts.onActiveMigration?.(undefined);
 

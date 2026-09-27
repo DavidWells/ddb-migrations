@@ -68,4 +68,32 @@ describe('up interruption persistence', () => {
     expect(markComplete).not.toHaveBeenCalled();
     expect(markFailed).not.toHaveBeenCalled();
   });
+
+  it('reports the interrupted migration in results and emits an interrupt event', async () => {
+    const cwd = makeProject();
+    const controller = new AbortController();
+    vi.spyOn(Ledger.prototype, 'markInterrupted').mockResolvedValue(true);
+    vi.spyOn(Ledger.prototype, 'ensureExists').mockResolvedValue();
+    vi.spyOn(Ledger.prototype, 'listAll').mockResolvedValue([]);
+    const markStart = vi.spyOn(Ledger.prototype, 'markStart').mockResolvedValue();
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const events: string[] = [];
+
+    const pending = up({
+      cwd,
+      stage: 'dev',
+      signal: controller.signal,
+      checkAccount: false,
+      onEvent: (event) => events.push(event.type),
+    });
+    await vi.waitFor(() => expect(markStart).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    controller.abort('received SIGINT');
+
+    const result = await pending;
+    expect(result.results).toMatchObject([{ id: '2026-01-01_wait', status: 'interrupted' }]);
+    expect(result.pending).toEqual(['2026-01-01_wait']);
+    expect(events).toEqual(['start', 'interrupt']);
+  });
 });
+
